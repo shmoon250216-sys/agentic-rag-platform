@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f8fa" />
+    <title>智流 Agent 工作台</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260717-ui1" />
+  </head>
+  <body>
+    <div id="appShell" class="app-shell">
+      <aside id="sidebar" class="sidebar" aria-label="主导航">
+        <div class="sidebar-head">
+          <a class="brand" href="/" aria-label="智流 Agent 首页">
+            <span class="brand-mark">智</span>
+            <span class="brand-copy">
+              <strong>智流 Agent</strong>
+              <small>Agentic RAG 工作台</small>
+            </span>
+          </a>
+          <button id="closeSidebarBtn" class="icon-btn mobile-only" type="button" title="关闭导航" aria-label="关闭导航">×</button>
+        </div>
+
+        <button id="newSessionBtn" class="new-chat-btn" type="button">
+          <span aria-hidden="true">＋</span>
+          <span>新建对话</span>
+        </button>
+
+        <nav class="primary-nav" aria-label="功能导航">
+          <button class="nav-item active" type="button" data-panel="chat">
+            <span>对话</span>
+          </button>
+          <button class="nav-item" type="button" data-panel="knowledge">
+            <span>知识库</span>
+            <span id="docNavCount" class="nav-count">0</span>
+          </button>
+          <button class="nav-item" type="button" data-panel="memory">
+            <span>长期记忆</span>
+            <span id="memoryNavCount" class="nav-count">0</span>
+          </button>
+          <button class="nav-item" type="button" data-panel="system">
+            <span>系统状态</span>
+            <span id="healthDot" class="health-dot" aria-label="服务状态"></span>
+          </button>
+        </nav>
+
+        <section class="history-section" aria-labelledby="historyTitle">
+          <div class="section-heading">
+            <h2 id="historyTitle">最近对话</h2>
+            <button id="refreshSessionsBtn" class="icon-btn" type="button" title="刷新会话" aria-label="刷新会话">↻</button>
+          </div>
+          <div id="sessionList" class="session-list"></div>
+        </section>
+
+        <button id="openSettingsBtn" class="account-row" type="button">
+          <span class="account-avatar">本</span>
+          <span class="account-copy">
+            <strong id="userSummary">local-user</strong>
+            <small>本地开发环境</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="topbar-main">
+            <button id="openSidebarBtn" class="icon-btn mobile-only" type="button" title="打开导航" aria-label="打开导航">☰</button>
+            <div class="page-title">
+              <h1>智能对话</h1>
+              <p id="sessionText">新会话</p>
+            </div>
+          </div>
+          <div class="route-status" title="Supervisor 当前选择的处理分支">
+            <span class="status-indicator"></span>
+            <span id="routeBadge">等待提问</span>
+          </div>
+        </header>
+
+        <div class="route-strip" aria-label="Agent 工作流">
+          <span class="route-label">Supervisor</span>
+          <div class="route-track">
+            <span class="route-item" data-route="rag">RAG</span>
+            <span class="route-item" data-route="tool">工具</span>
+            <span class="route-item" data-route="plan">规划</span>
+            <span class="route-item" data-route="chat">对话</span>
+            <span class="route-item" data-route="fallback">兜底</span>
+          </div>
+        </div>
+
+        <section id="chatLog" class="chat-log" aria-live="polite">
+          <section class="welcome" data-welcome>
+            <div class="welcome-mark">AI</div>
+            <h2>今天想解决什么问题？</h2>
+            <p>我会根据问题自动选择知识检索、工具调用、任务规划或普通对话。</p>
+            <div class="quick-actions">
+              <button type="button" data-prompt="请结合知识库介绍这个项目的架构">
+                <strong>了解项目架构</strong>
+                <span>检索知识库并给出来源</span>
+              </button>
+              <button type="button" data-prompt="请帮我制定下一阶段完善 Agent 项目的计划">
+                <strong>规划下一阶段</strong>
+                <span>拆解目标、步骤和风险</span>
+              </button>
+              <button type="button" data-prompt="统计一下知识库有多少文档">
+                <strong>调用知识工具</strong>
+                <span>查看工具选择与执行结果</span>
+              </button>
+            </div>
+          </section>
+        </section>
+
+        <div class="composer-wrap">
+          <form id="chatForm" class="composer">
+            <textarea id="messageInput" rows="1" maxlength="4000" placeholder="给 Agent 发送消息"></textarea>
+            <button id="sendBtn" class="send-btn" type="submit" title="发送消息" aria-label="发送消息">↑</button>
+          </form>
+          <p id="composerStatus" class="composer-status">回答由模型生成，请核对重要信息。</p>
+        </div>
+      </main>
+
+      <aside id="inspector" class="inspector" aria-hidden="true" aria-label="功能面板">
+        <header class="inspector-head">
+          <div>
+            <p>工作区</p>
+            <h2 id="inspectorTitle">知识库</h2>
+          </div>
+          <button id="closeInspectorBtn" class="icon-btn" type="button" title="关闭面板" aria-label="关闭面板">×</button>
+        </header>
+
+        <div class="inspector-body">
+          <section class="panel-view" data-view="knowledge">
+            <div class="view-intro">
+              <h3>添加业务资料</h3>
+              <p id="docStatus" class="inline-status">正在加载知识库</p>
+            </div>
+            <div class="ingest-switch" role="tablist" aria-label="资料导入方式">
+              <button class="ingest-option active" type="button" role="tab" aria-selected="true" data-ingest-mode="text">粘贴文本</button>
+              <button class="ingest-option" type="button" role="tab" aria-selected="false" data-ingest-mode="file">上传文件</button>
+            </div>
+
+            <div data-ingest-view="text">
+              <label class="field">
+                <span>文档标题</span>
+                <input id="docTitleInput" type="text" value="我的项目说明" maxlength="120" />
+              </label>
+              <label class="field">
+                <span>文档内容</span>
+                <textarea id="docContentInput" rows="7" maxlength="20000" placeholder="粘贴项目说明、学习笔记或企业业务资料"></textarea>
+              </label>
+              <button id="addDocBtn" class="primary-btn" type="button">加入知识库</button>
+            </div>
+
+            <div data-ingest-view="file" hidden>
+              <input id="docFileInput" class="visually-hidden" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+              <label id="uploadZone" class="upload-zone" for="docFileInput">
+                <strong id="selectedFileName">选择或拖入 PDF、DOCX</strong>
+                <span id="selectedFileMeta">单个文件最大 10MB</span>
+              </label>
+              <label class="field file-title-field">
+                <span>文档标题（可选）</span>
+                <input id="fileTitleInput" type="text" maxlength="120" placeholder="默认使用文件名" />
+              </label>
+              <button id="uploadDocBtn" class="primary-btn" type="button" disabled>解析并加入知识库</button>
+            </div>
+            <div class="list-heading">
+              <h3>已收录文档</h3>
+              <button id="refreshDocumentsBtn" class="text-btn" type="button">刷新</button>
+            </div>
+            <div id="docList" class="resource-list"></div>
+          </section>
+
+          <section class="panel-view" data-view="memory" hidden>
+            <div class="view-intro">
+              <h3>管理长期记忆</h3>
+              <p id="memoryStatus" class="inline-status">正在加载长期记忆</p>
+            </div>
+            <label class="field">
+              <span>记忆类型</span>
+              <select id="memoryTypeInput">
+                <option value="preference">用户偏好</option>
+                <option value="goal">长期目标</option>
+                <option value="profile">用户画像</option>
+                <option value="project_fact">项目事实</option>
+                <option value="decision">关键决策</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>记忆内容</span>
+              <textarea id="memoryContentInput" rows="5" placeholder="例如：回答使用中文，并把技术原理解释清楚。"></textarea>
+            </label>
+            <button id="addMemoryBtn" class="primary-btn" type="button">加入长期记忆</button>
+            <div class="list-heading">
+              <h3>当前记忆</h3>
+              <button id="refreshMemoriesBtn" class="text-btn" type="button">刷新</button>
+            </div>
+            <div id="memoryList" class="resource-list"></div>
+          </section>
+
+          <section class="panel-view" data-view="system" hidden>
+            <div class="view-intro system-heading">
+              <div>
+                <h3>运行配置</h3>
+                <p id="systemStatus" class="inline-status">正在检查服务</p>
+              </div>
+              <button id="refreshSystemBtn" class="text-btn" type="button">刷新</button>
+            </div>
+            <label class="field">
+              <span>访问 Token</span>
+              <input id="tokenInput" type="password" value="dev-token" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>当前用户</span>
+              <input id="userInput" type="text" value="local-user" maxlength="128" />
+            </label>
+
+            <div id="systemInfoList" class="info-grid" aria-label="系统配置"></div>
+
+            <div class="list-heading">
+              <h3>质量门禁</h3>
+              <span id="qualitySummary" class="quality-badge pending">待检测</span>
+            </div>
+            <div id="qualityMetrics" class="metric-grid"></div>
+
+            <div class="list-heading">
+              <h3>缓存</h3>
+              <button id="clearCacheBtn" class="text-btn danger-text" type="button">清空</button>
+            </div>
+            <div id="cacheStats" class="info-grid"></div>
+
+            <div class="list-heading">
+              <h3>可用工具</h3>
+            </div>
+            <div id="toolList" class="resource-list"></div>
+          </section>
+        </div>
+      </aside>
+
+      <button id="drawerBackdrop" class="drawer-backdrop" type="button" aria-label="关闭面板"></button>
+    </div>
+
+    <script src="/static/app.js?v=20260719-file-upload"></script>
+  </body>
+</html>

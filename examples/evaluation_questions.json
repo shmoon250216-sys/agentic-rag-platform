@@ -1,0 +1,15 @@
+{
+  "document": "云栖智联_差旅及费用报销管理制度_V3.2_RAG测试版.pdf",
+  "purpose": "验证 PDF 解析、文档切分、混合召回与来源引用链路",
+  "questions": [
+    {"id": "travel-01", "question": "员工出差前需要完成哪些审批？", "expected_topic": "出差申请与审批"},
+    {"id": "travel-02", "question": "不同城市的住宿标准如何确定？", "expected_topic": "住宿费标准"},
+    {"id": "travel-03", "question": "超出住宿标准后是否可以报销？", "expected_topic": "超标准处理"},
+    {"id": "travel-04", "question": "费用报销需要提交哪些凭证？", "expected_topic": "报销材料"},
+    {"id": "travel-05", "question": "差旅结束后多久应完成报销？", "expected_topic": "报销时限"},
+    {"id": "travel-06", "question": "发票丢失时应如何处理？", "expected_topic": "凭证异常"},
+    {"id": "travel-07", "question": "哪些费用不得报销？", "expected_topic": "禁止报销范围"},
+    {"id": "travel-08", "question": "审批人和财务分别承担什么责任？", "expected_topic": "职责分工"}
+  ],
+  "boundary": "测试文档与问题均为合成数据，不代表真实企业制度。"
+}
