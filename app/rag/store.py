@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from uuid import uuid4
 
-from app.rag.embedding import EmbeddingModel, HashEmbeddingModel, cosine_similarity, tokenize
+from app.rag.embedding import (
+    EmbeddingModel,
+    HashEmbeddingModel,
+    cosine_similarity,
+    tokenize,
+    tokenize_for_search,
+)
+from app.rag.ranking import BM25Ranker, RankedItem, normalize_scores, reciprocal_rank_fusion
 from app.rag.text_splitter import split_text
 from app.schemas.chat import SourceChunk
 from app.schemas.document import DocumentSummary
@@ -25,9 +32,21 @@ class StoredDocument:
 
 
 class InMemoryKnowledgeBase:
-    def __init__(self, embedding_model: EmbeddingModel | None = None) -> None:
+    def __init__(
+        self,
+        embedding_model: EmbeddingModel | None = None,
+        *,
+        candidate_multiplier: int = 4,
+        rrf_k: int = 60,
+        bm25_weight: float = 1.0,
+        vector_weight: float = 0.1,
+    ) -> None:
         self._documents: dict[str, StoredDocument] = {}
         self.embedding_model = embedding_model or HashEmbeddingModel()
+        self.candidate_multiplier = max(candidate_multiplier, 1)
+        self.rrf_k = rrf_k
+        self.bm25_weight = bm25_weight
+        self.vector_weight = vector_weight
 
     def add_document(self, title: str, content: str) -> DocumentSummary:
         doc_id = str(uuid4())
@@ -52,30 +71,63 @@ class InMemoryKnowledgeBase:
         return self._documents.pop(doc_id, None) is not None
 
     def search(self, query: str, top_k: int = 3) -> list[SourceChunk]:
-        query_terms = tokenize(query)
+        query_terms = tokenize_for_search(query)
         if not query_terms:
             return []
 
-        query_embedding = self.embedding_model.embed(query)
-        scored: list[tuple[float, StoredChunk]] = []
-        for document in self._documents.values():
-            for chunk in document.chunks:
-                searchable_text = f"{chunk.title}\n{chunk.content}"
-                lexical_score = _lexical_score(query, query_terms, searchable_text)
-                vector_score = cosine_similarity(query_embedding, chunk.embedding)
-                score = _hybrid_score(vector_score, lexical_score)
-                if score > 0:
-                    scored.append((score, chunk))
+        chunks = [
+            chunk
+            for document in self._documents.values()
+            for chunk in document.chunks
+        ]
+        if not chunks:
+            return []
 
-        scored.sort(key=lambda item: item[0], reverse=True)
+        candidate_count = min(max(top_k * self.candidate_multiplier, top_k), len(chunks))
+        query_embedding = self.embedding_model.embed(query)
+        vector_ranking = sorted(
+            (
+                RankedItem(
+                    item=chunk.chunk_id,
+                    score=max(cosine_similarity(query_embedding, chunk.embedding), 0.0),
+                )
+                for chunk in chunks
+            ),
+            key=lambda result: result.score,
+            reverse=True,
+        )
+        vector_ranking = [result for result in vector_ranking if result.score > 0][
+            :candidate_count
+        ]
+
+        corpus = [tokenize_for_search(f"{chunk.title}\n{chunk.content}") for chunk in chunks]
+        bm25_scores = BM25Ranker(corpus).scores(query_terms)
+        bm25_ranking = sorted(
+            (
+                RankedItem(item=chunk.chunk_id, score=score)
+                for chunk, score in zip(chunks, bm25_scores)
+                if score > 0
+            ),
+            key=lambda result: result.score,
+            reverse=True,
+        )[:candidate_count]
+
+        fused = normalize_scores(
+            reciprocal_rank_fusion(
+                [bm25_ranking, vector_ranking],
+                rrf_k=self.rrf_k,
+                weights=[self.bm25_weight, self.vector_weight],
+            )
+        )
+        chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
         return [
             SourceChunk(
-                doc_id=chunk.doc_id,
-                title=chunk.title,
-                snippet=chunk.content[:220],
-                score=round(min(score, 1.0), 4),
+                doc_id=chunks_by_id[result.item].doc_id,
+                title=chunks_by_id[result.item].title,
+                snippet=chunks_by_id[result.item].content[:2000],
+                score=round(result.score, 4),
             )
-            for score, chunk in scored[:top_k]
+            for result in fused[:top_k]
         ]
 
     def seed_defaults(self) -> None:

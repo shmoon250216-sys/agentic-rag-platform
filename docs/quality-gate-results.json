@@ -34,7 +34,7 @@
     },
     {
       "metric": "average_latency_ms",
-      "actual": 1.3,
+      "actual": 1.12,
       "expected": 500.0,
       "passed": true
     }
@@ -44,7 +44,7 @@
     "route_accuracy": 1.0,
     "rag_hit_rate": 1.0,
     "tool_accuracy": 1.0,
-    "average_latency_ms": 1.3,
+    "average_latency_ms": 1.12,
     "results": [
       {
         "case_id": "rag_architecture",
@@ -54,7 +54,7 @@
         "route_correct": true,
         "rag_hit": true,
         "tool_correct": null,
-        "latency_ms": 3.84
+        "latency_ms": 3.68
       },
       {
         "case_id": "rag_learning_plan",
@@ -64,7 +64,7 @@
         "route_correct": true,
         "rag_hit": true,
         "tool_correct": null,
-        "latency_ms": 1.23
+        "latency_ms": 1.28
       },
       {
         "case_id": "rag_redis",
@@ -74,7 +74,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 1.09
+        "latency_ms": 1.11
       },
       {
         "case_id": "tool_calculator_add",
@@ -84,7 +84,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": true,
-        "latency_ms": 1.02
+        "latency_ms": 0.97
       },
       {
         "case_id": "tool_calculator_multiply",
@@ -94,7 +94,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": true,
-        "latency_ms": 0.83
+        "latency_ms": 0.89
       },
       {
         "case_id": "tool_doc_stats",
@@ -104,7 +104,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": true,
-        "latency_ms": 0.82
+        "latency_ms": 0.83
       },
       {
         "case_id": "plan_policy_rollout",
@@ -114,7 +114,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 1.11
+        "latency_ms": 0.79
       },
       {
         "case_id": "plan_learning_tasks",
@@ -124,7 +124,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 2.05
+        "latency_ms": 0.76
       },
       {
         "case_id": "chat_greeting",
@@ -134,7 +134,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 0.97
+        "latency_ms": 0.77
       },
       {
         "case_id": "chat_general",
@@ -144,7 +144,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 0.85
+        "latency_ms": 0.76
       },
       {
         "case_id": "fallback_illegal",
@@ -154,7 +154,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 0.78
+        "latency_ms": 0.84
       },
       {
         "case_id": "fallback_attack",
@@ -164,7 +164,7 @@
         "route_correct": true,
         "rag_hit": null,
         "tool_correct": null,
-        "latency_ms": 0.96
+        "latency_ms": 0.76
       }
     ]
   },

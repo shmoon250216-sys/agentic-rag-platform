@@ -1,0 +1,122 @@
+{
+  "dataset": {
+    "document": "云栖智联_差旅及费用报销管理制度_V3.2_RAG测试版.pdf",
+    "synthetic": true,
+    "page_count": 8,
+    "character_count": 5764,
+    "chunk_count": 14,
+    "question_count": 8,
+    "embedding": "deterministic hash embedding; not a semantic production model",
+    "rrf_weights": {
+      "bm25": 1.0,
+      "vector": 0.1
+    }
+  },
+  "metrics": {
+    "bm25": {
+      "recall_at_1": 0.5,
+      "recall_at_3": 1.0,
+      "mrr": 0.7292
+    },
+    "vector": {
+      "recall_at_1": 0.25,
+      "recall_at_3": 0.5,
+      "mrr": 0.3867
+    },
+    "rrf": {
+      "recall_at_1": 0.5,
+      "recall_at_3": 0.875,
+      "mrr": 0.7014
+    }
+  },
+  "cases": [
+    {
+      "id": "travel-01",
+      "question": "员工出差前需要完成哪些审批？",
+      "expected_topic": "出差申请与审批",
+      "expected_evidence": "4. 出差前审批",
+      "rank": {
+        "bm25": 1,
+        "vector": 1,
+        "rrf": 1
+      }
+    },
+    {
+      "id": "travel-02",
+      "question": "不同城市的住宿标准如何确定？",
+      "expected_topic": "住宿费标准",
+      "expected_evidence": "7. 境内住宿上限",
+      "rank": {
+        "bm25": 1,
+        "vector": 1,
+        "rrf": 1
+      }
+    },
+    {
+      "id": "travel-03",
+      "question": "超出住宿标准后是否可以报销？",
+      "expected_topic": "超标准处理",
+      "expected_evidence": "住宿例外",
+      "rank": {
+        "bm25": 1,
+        "vector": 6,
+        "rrf": 1
+      }
+    },
+    {
+      "id": "travel-04",
+      "question": "费用报销需要提交哪些凭证？",
+      "expected_topic": "报销材料",
+      "expected_evidence": "11. 必备材料",
+      "rank": {
+        "bm25": 2,
+        "vector": 12,
+        "rrf": 2
+      }
+    },
+    {
+      "id": "travel-05",
+      "question": "差旅结束后多久应完成报销？",
+      "expected_topic": "报销时限",
+      "expected_evidence": "10. 报销时限",
+      "rank": {
+        "bm25": 3,
+        "vector": 13,
+        "rrf": 9
+      }
+    },
+    {
+      "id": "travel-06",
+      "question": "发票丢失时应如何处理？",
+      "expected_topic": "凭证异常",
+      "expected_evidence": "12. 缺失发票处理",
+      "rank": {
+        "bm25": 1,
+        "vector": 3,
+        "rrf": 1
+      }
+    },
+    {
+      "id": "travel-07",
+      "question": "哪些费用不得报销？",
+      "expected_topic": "禁止报销范围",
+      "expected_evidence": "16. 不予报销事项",
+      "rank": {
+        "bm25": 2,
+        "vector": 10,
+        "rrf": 2
+      }
+    },
+    {
+      "id": "travel-08",
+      "question": "审批人和财务分别承担什么责任？",
+      "expected_topic": "职责分工",
+      "expected_evidence": "3. 角色定义",
+      "rank": {
+        "bm25": 2,
+        "vector": 3,
+        "rrf": 2
+      }
+    }
+  ]
+}

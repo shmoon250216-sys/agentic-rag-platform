@@ -98,16 +98,20 @@ def get_embedding_model(settings: Settings) -> EmbeddingModel:
     raise ValueError(f"Unsupported embedding provider: {settings.embedding_provider}")
 
 
-def tokenize(text: str) -> set[str]:
+def tokenize_for_search(text: str) -> list[str]:
     lowered = text.lower()
-    words = set(re.findall(r"[a-z0-9]+", lowered))
-    chinese_chars = {char for char in lowered if "\u4e00" <= char <= "\u9fff"}
-    chinese_bigrams = {
+    words = re.findall(r"[a-z0-9]+", lowered)
+    chinese_chars = [char for char in lowered if "\u4e00" <= char <= "\u9fff"]
+    chinese_bigrams = [
         lowered[index : index + 2]
         for index in range(len(lowered) - 1)
         if all("\u4e00" <= char <= "\u9fff" for char in lowered[index : index + 2])
-    }
-    return words | chinese_chars | chinese_bigrams
+    ]
+    return words + chinese_chars + chinese_bigrams
+
+
+def tokenize(text: str) -> set[str]:
+    return set(tokenize_for_search(text))
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:

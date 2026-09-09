@@ -63,3 +63,21 @@ docs/evaluation-results.json
 - SSE 首 token 延迟。
 - Redis 缓存命中率。
 - 真实 LLM 回答质量人工评分。
+
+## 检索专项评测
+
+运行：
+
+```powershell
+python scripts\evaluate_retrieval.py
+```
+
+脚本解析 `examples/documents/` 中的 8 页合成制度 PDF，以 8 个问题及人工标注的证据标题分别评测 BM25、Hash 向量检索和加权 RRF。结果写入 `docs/retrieval-evaluation-results.json`。
+
+| 策略 | Recall@1 | Recall@3 | MRR |
+| --- | ---: | ---: | ---: |
+| BM25 | 50.0% | 100.0% | 0.7292 |
+| Hash 向量 | 25.0% | 50.0% | 0.3867 |
+| 加权 RRF | 50.0% | 87.5% | 0.7014 |
+
+这组结果没有证明 RRF 优于 BM25。它说明默认 Hash Embedding 缺少语义能力，即使把向量权重降至 0.1，仍可能扰动关键词侧的正确排序。保留该失败信号是为了指导下一步：接入真实中文 Embedding，按查询类型调整融合权重，再对 Reranker 做独立增量评测。当前 HTTP Reranker 只完成协议、排序和故障回退测试，没有第三方模型效果数据。

@@ -11,7 +11,7 @@ from redis.exceptions import RedisError, ResponseError
 
 from app.core.errors import AppError
 from app.rag.embedding import EmbeddingModel, HashEmbeddingModel, tokenize
-from app.rag.store import _hybrid_score, _lexical_score
+from app.rag.ranking import RankedItem, normalize_scores, reciprocal_rank_fusion
 from app.rag.text_splitter import split_text
 from app.schemas.chat import SourceChunk
 from app.schemas.document import DocumentSummary
@@ -57,6 +57,10 @@ class RedisKnowledgeBase:
         defaults: RedisRagDefaults | None = None,
         connect_timeout: float = 2,
         socket_timeout: float = 5,
+        candidate_multiplier: int = 4,
+        rrf_k: int = 60,
+        bm25_weight: float = 1.0,
+        vector_weight: float = 0.1,
     ) -> None:
         self.redis = redis.from_url(
             redis_url,
@@ -69,6 +73,10 @@ class RedisKnowledgeBase:
         self.embedding_model = embedding_model or HashEmbeddingModel(dimensions=vector_dimensions)
         self.vector_dimensions = vector_dimensions
         self.defaults = defaults or RedisRagDefaults()
+        self.candidate_multiplier = max(candidate_multiplier, 1)
+        self.rrf_k = rrf_k
+        self.bm25_weight = bm25_weight
+        self.vector_weight = vector_weight
         self._ready = False
         self._ready_lock = asyncio.Lock()
 
@@ -115,48 +123,66 @@ class RedisKnowledgeBase:
             if not query_terms:
                 return []
 
-            candidate_count = max(top_k * 4, top_k)
-            search_query = (
+            candidate_count = max(top_k * self.candidate_multiplier, top_k)
+            vector_query = (
                 Query(
                     f"(*)=>[KNN {candidate_count} "
                     "@embedding $vector AS vector_distance]"
                 )
                 .sort_by("vector_distance")
-                .return_fields("doc_id", "title", "content", "vector_distance")
+                .return_fields("doc_id", "chunk_id", "title", "content", "vector_distance")
                 .paging(0, candidate_count)
                 .dialect(2)
             )
-            result = await self.redis.ft(self.index_name).search(
-                search_query,
-                {"vector": _vector_to_bytes(self._embed(query))},
+            lexical_query = (
+                Query(_build_full_text_query(query_terms))
+                .with_scores()
+                .scorer("BM25STD")
+                .language("chinese")
+                .return_fields("doc_id", "chunk_id", "title", "content")
+                .paging(0, candidate_count)
+                .dialect(2)
+            )
+            vector_result, lexical_result = await asyncio.gather(
+                self.redis.ft(self.index_name).search(
+                    vector_query,
+                    {"vector": _vector_to_bytes(self._embed(query))},
+                ),
+                self.redis.ft(self.index_name).search(lexical_query),
             )
         except RedisError as exc:
             raise RedisBackendUnavailable() from exc
 
-        scored: list[tuple[float, SourceChunk]] = []
-        for doc in result.docs:
-            content = _decode(doc.content)
-            title = _decode(doc.title)
-            doc_id = _decode(doc.doc_id)
+        candidates: dict[str, SourceChunk] = {}
+        vector_ranking: list[RankedItem[str]] = []
+        for doc in vector_result.docs:
+            chunk_id = _decode(doc.chunk_id)
             vector_score = max(0.0, 1.0 - float(_decode(doc.vector_distance)))
-            lexical_score = _lexical_score(query, query_terms, f"{title}\n{content}")
-            score = _hybrid_score(vector_score, lexical_score)
-            if score <= 0:
+            if vector_score <= 0:
                 continue
-            scored.append(
-                (
-                    score,
-                    SourceChunk(
-                        doc_id=doc_id,
-                        title=title,
-                        snippet=content[:220],
-                        score=round(min(score, 1.0), 4),
-                    ),
-                )
-            )
+            candidates[chunk_id] = _source_from_redis_document(doc)
+            vector_ranking.append(RankedItem(item=chunk_id, score=vector_score))
 
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [source for _, source in scored[:top_k]]
+        bm25_ranking: list[RankedItem[str]] = []
+        for doc in lexical_result.docs:
+            chunk_id = _decode(doc.chunk_id)
+            bm25_score = float(_decode(doc.score))
+            if bm25_score <= 0:
+                continue
+            candidates[chunk_id] = _source_from_redis_document(doc)
+            bm25_ranking.append(RankedItem(item=chunk_id, score=bm25_score))
+
+        fused = normalize_scores(
+            reciprocal_rank_fusion(
+                [bm25_ranking, vector_ranking],
+                rrf_k=self.rrf_k,
+                weights=[self.bm25_weight, self.vector_weight],
+            )
+        )
+        return [
+            candidates[result.item].model_copy(update={"score": round(result.score, 4)})
+            for result in fused[:top_k]
+        ]
 
     async def health(self) -> dict[str, object]:
         try:
@@ -222,6 +248,7 @@ class RedisKnowledgeBase:
             definition=IndexDefinition(
                 prefix=[self.defaults.chunk_prefix],
                 index_type=IndexType.HASH,
+                language="chinese",
             ),
         )
 
@@ -288,6 +315,20 @@ class RedisKnowledgeBase:
 
 def _vector_to_bytes(vector: list[float]) -> bytes:
     return array("f", vector).tobytes()
+
+
+def _build_full_text_query(query_terms: set[str]) -> str:
+    terms = sorted(query_terms, key=lambda term: (-len(term), term))
+    return " | ".join(f'"{term}"' for term in terms)
+
+
+def _source_from_redis_document(document: object) -> SourceChunk:
+    return SourceChunk(
+        doc_id=_decode(document.doc_id),
+        title=_decode(document.title),
+        snippet=_decode(document.content)[:2000],
+        score=0.0,
+    )
 
 
 def _decode(value: object) -> str:

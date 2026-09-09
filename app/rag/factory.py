@@ -26,7 +26,17 @@ def get_knowledge_base():
             embedding_model=embedding_model,
             connect_timeout=settings.redis_connect_timeout_seconds,
             socket_timeout=settings.redis_socket_timeout_seconds,
+            candidate_multiplier=settings.rag_candidate_multiplier,
+            rrf_k=settings.rag_rrf_k,
+            bm25_weight=settings.rag_bm25_weight,
+            vector_weight=settings.rag_vector_weight,
         )
-    store = InMemoryKnowledgeBase(embedding_model=embedding_model)
+    store = InMemoryKnowledgeBase(
+        embedding_model=embedding_model,
+        candidate_multiplier=settings.rag_candidate_multiplier,
+        rrf_k=settings.rag_rrf_k,
+        bm25_weight=settings.rag_bm25_weight,
+        vector_weight=settings.rag_vector_weight,
+    )
     store.seed_defaults()
     return store

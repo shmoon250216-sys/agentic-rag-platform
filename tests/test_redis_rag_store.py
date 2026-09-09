@@ -17,14 +17,27 @@ class UnavailableRedis:
 
 
 class SearchClient:
-    async def search(self, *_args, **_kwargs):
+    async def search(self, query, *_args, **_kwargs):
+        if "KNN" in query.query_string():
+            return SimpleNamespace(
+                docs=[
+                    SimpleNamespace(
+                        doc_id="doc-1".encode(),
+                        chunk_id="doc-1:0".encode(),
+                        title="内部制度".encode(),
+                        content="报销申请需要主管审批".encode(),
+                        vector_distance=b"0.1",
+                    )
+                ]
+            )
         return SimpleNamespace(
             docs=[
                 SimpleNamespace(
                     doc_id="doc-1".encode(),
+                    chunk_id="doc-1:0".encode(),
                     title="内部制度".encode(),
                     content="报销申请需要主管审批".encode(),
-                    vector_distance=b"0.1",
+                    score=b"2.4",
                 )
             ]
         )
