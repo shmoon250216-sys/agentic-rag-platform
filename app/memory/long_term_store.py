@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import aiosqlite
@@ -28,10 +29,18 @@ class SQLiteLongTermMemoryStore:
         importance: float = 0.7,
     ) -> MemoryItem:
         await self._ensure_schema()
-        normalized_content = " ".join(content.strip().split())
+        normalized_content = " ".join(content.strip().split())[: get_settings().memory_item_chars]
+        slot = _preference_slot(memory_type, normalized_content)
         embedding_json = _embedding_to_json(self.embedding_model.embed(normalized_content))
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
+            await db.execute("BEGIN IMMEDIATE")
+            await self._prune(db, user_id)
+            if slot:
+                await db.execute(
+                    "DELETE FROM user_memories WHERE user_id = ? AND slot = ? AND content != ?",
+                    (user_id, slot, normalized_content),
+                )
             await db.execute(
                 """
                 INSERT INTO user_memories (
@@ -39,17 +48,20 @@ class SQLiteLongTermMemoryStore:
                     memory_type,
                     content,
                     importance,
-                    embedding_json
+                    embedding_json, slot
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, memory_type, content)
                 DO UPDATE SET
                     importance = MAX(user_memories.importance, excluded.importance),
                     embedding_json = excluded.embedding_json,
+                    slot = excluded.slot,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (user_id, memory_type.value, normalized_content, importance, embedding_json),
+                (user_id, memory_type.value, normalized_content, importance, embedding_json, slot),
             )
+            # Preserve the just-written fact; discard lowest-priority older items first.
+            await self._prune(db, user_id, preserve=(memory_type.value, normalized_content))
             await db.commit()
             cursor = await db.execute(
                 """
@@ -66,6 +78,8 @@ class SQLiteLongTermMemoryStore:
         await self._ensure_schema()
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
+            await self._prune(db, user_id)
+            await db.commit()
             cursor = await db.execute(
                 """
                 SELECT memory_id, user_id, memory_type, content, importance, created_at, updated_at
@@ -85,6 +99,8 @@ class SQLiteLongTermMemoryStore:
 
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
+            await self._prune(db, user_id)
+            await db.commit()
             cursor = await db.execute(
                 """
                 SELECT
@@ -99,15 +115,19 @@ class SQLiteLongTermMemoryStore:
                 FROM user_memories
                 WHERE user_id = ?
                 ORDER BY importance DESC, updated_at DESC
-                LIMIT 100
+                LIMIT ?
                 """,
-                (user_id,),
+                (user_id, get_settings().memory_max_items),
             )
             rows = await cursor.fetchall()
 
         scored: list[tuple[float, MemoryItem]] = []
+        preferences: list[MemoryItem] = []
         for row in rows:
             memory = _row_to_memory(row)
+            if _preference_slot(memory.memory_type, memory.content):
+                preferences.append(memory)
+                continue
             memory_embedding = _embedding_from_row(row)
             if memory_embedding is None:
                 memory_embedding = self.embedding_model.embed(memory.content)
@@ -122,7 +142,23 @@ class SQLiteLongTermMemoryStore:
                 scored.append((score, memory))
 
         scored.sort(key=lambda item: item[0], reverse=True)
-        return [memory for _, memory in scored[:limit]]
+        return (preferences[:2] + [memory for _, memory in scored])[:limit]
+
+    async def _prune(self, db, user_id: str, preserve=None) -> None:
+        settings = get_settings()
+        await db.execute(
+            "DELETE FROM user_memories WHERE user_id = ? AND updated_at < datetime('now', ?)",
+            (user_id, f"-{settings.memory_ttl_days} days"),
+        )
+        kind, content = preserve or ("", "")
+        await db.execute(
+            """DELETE FROM user_memories WHERE user_id = ? AND memory_id NOT IN (
+                SELECT memory_id FROM user_memories WHERE user_id = ?
+                ORDER BY (memory_type = ? AND content = ?) DESC,
+                         importance DESC, updated_at DESC, memory_id DESC LIMIT ?
+            )""",
+            (user_id, user_id, kind, content, settings.memory_max_items),
+        )
 
     async def delete(self, memory_id: int, user_id: str | None = None) -> bool:
         await self._ensure_schema()
@@ -158,7 +194,7 @@ class SQLiteLongTermMemoryStore:
 
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.database_path) as db:
-            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("BEGIN IMMEDIATE")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_memories (
@@ -180,6 +216,14 @@ class SQLiteLongTermMemoryStore:
                 """
             )
             await _ensure_embedding_column(db)
+            cursor = await db.execute("PRAGMA table_info(user_memories)")
+            columns = {row[1] for row in await cursor.fetchall()}
+            if "slot" not in columns:
+                await db.execute("ALTER TABLE user_memories ADD COLUMN slot TEXT")
+                await _migrate_legacy_preferences(db)
+            await db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_slot ON user_memories(user_id, slot)"
+            )
             await db.commit()
         self._initialized = True
 
@@ -227,3 +271,51 @@ def _embedding_from_row(row: aiosqlite.Row) -> list[float] | None:
 
 def _hybrid_memory_score(vector_score: float, lexical_score: float, importance: float) -> float:
     return 0.6 * vector_score + 0.25 * lexical_score + 0.15 * importance
+
+
+def _preference_slot(memory_type: MemoryType, content: str) -> str | None:
+    if memory_type == MemoryType.preference:
+        for prefix, slot in (
+            ("回答语言：", "response_language"),
+            ("回答详略：", "response_detail"),
+        ):
+            if content.startswith(prefix):
+                return slot
+    return None
+
+
+async def _migrate_legacy_preferences(db) -> None:
+    """One-time conversion of recognized old preferences; newest explicit value wins.
+
+    Unrelated free-text memories remain unchanged. Converted rows preserve their
+    timestamps; migration must not revive expired facts.
+    """
+    cursor = await db.execute(
+        """SELECT memory_id, user_id, content, importance, created_at, updated_at
+           FROM user_memories WHERE memory_type = 'preference'
+           ORDER BY updated_at ASC, memory_id ASC"""
+    )
+    for memory_id, user_id, content, importance, created, updated in await cursor.fetchall():
+        language = re.findall(r"(?:用|使用|回答语言：)(中文|英文|英语|汉语)", content)
+        detail = re.findall(r"详细|简洁|简短", content)
+        values = []
+        if language:
+            value = "中文" if language[-1] in {"中文", "汉语"} else "英文"
+            values.append(("response_language", f"回答语言：{value}"))
+        if detail:
+            value = "详细" if detail[-1] == "详细" else "简洁"
+            values.append(("response_detail", f"回答详略：{value}"))
+        if not values:
+            continue
+        await db.execute("DELETE FROM user_memories WHERE memory_id = ?", (memory_id,))
+        for slot, value in values:
+            await db.execute(
+                "DELETE FROM user_memories WHERE user_id = ? AND (slot = ? OR (memory_type = 'preference' AND content = ?))",
+                (user_id, slot, value),
+            )
+            await db.execute(
+                """INSERT INTO user_memories (user_id, memory_type, content, importance,
+                   embedding_json, slot, created_at, updated_at)
+                   VALUES (?, 'preference', ?, ?, NULL, ?, ?, ?)""",
+                (user_id, value, importance, slot, created, updated),
+            )

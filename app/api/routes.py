@@ -99,6 +99,9 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
 @router.post("/api/v1/chat/stream", dependencies=[Depends(verify_token)])
 async def stream_chat(request: ChatRequest) -> EventSourceResponse:
+    if request.session_id:
+        # Reject a mismatched session before HTTP/SSE headers are sent.
+        await chat_service.sessions.get_or_create(request.user_id, request.session_id)
     async def event_generator() -> AsyncIterator[dict[str, str]]:
         yield _sse_event("start", {"message": "workflow_started"})
         async for event, payload in chat_service.stream_chat(request):

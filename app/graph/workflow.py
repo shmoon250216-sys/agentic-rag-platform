@@ -5,6 +5,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.core.config import get_settings
+from app.memory.context import ConversationContext, format_context
 from app.llm.client import LLMClient, get_llm_client
 from app.rag.retriever import KnowledgeBaseRetriever
 from app.schemas.chat import ChatRequest, ChatResponse, RouteName
@@ -30,20 +31,29 @@ class AgentWorkflow:
         request: ChatRequest,
         session_id: str,
         memories: list[str] | None = None,
+        context: ConversationContext | None = None,
     ) -> ChatResponse:
         initial_state: AgentState = {
             "user_id": request.user_id,
             "session_id": session_id,
             "message": request.message,
+            "query": context.query if context else request.message,
+            "history": context.history if context else [],
+            "summary": context.summary if context else "",
             "memories": memories or [],
             "sources": [],
             "tool_result": None,
             "error": None,
         }
-        result = await self.graph.ainvoke(
-            initial_state,
-            config={"configurable": {"thread_id": session_id}},
-        )
+        try:
+            result = await self.graph.ainvoke(
+                initial_state,
+                config={"configurable": {"thread_id": session_id}},
+            )
+        finally:
+            # History is explicitly rebuilt from SQLite. In-run checkpoints need
+            # not accumulate indefinitely or carry fields into the next turn.
+            await self.checkpointer.adelete_thread(session_id)
         decision = result["route"]
 
         return ChatResponse(
@@ -59,22 +69,26 @@ class AgentWorkflow:
         request: ChatRequest,
         session_id: str,
         memories: list[str] | None = None,
+        context: ConversationContext | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         state: AgentState = {
             "user_id": request.user_id,
             "session_id": session_id,
             "message": request.message,
+            "query": context.query if context else request.message,
+            "history": context.history if context else [],
+            "summary": context.summary if context else "",
             "memories": memories or [],
             "sources": [],
             "tool_result": None,
             "error": None,
         }
-        decision = self.router.decide(state["message"])
+        decision = self._decide(state)
         state["route"] = decision
         yield "route", decision
 
         if decision.route == RouteName.rag:
-            sources = await self.retriever.search(state["message"])
+            sources = await self.retriever.search(state.get("query", state["message"]))
             state["sources"] = sources
             answer_parts: list[str] = []
             async for token in self.llm.stream_answer_with_context(
@@ -109,17 +123,19 @@ class AgentWorkflow:
             state["answer"] = "".join(answer_parts)
         else:
             state["answer"] = (
-                "这个请求触发了兜底分支。后续会在这里加入更完整的安全边界、"
-                "错误恢复和人工提示。"
+                "这个请求触发了兜底分支。后续会在这里加入更完整的安全边界、错误恢复和人工提示。"
             )
             yield "token", state["answer"]
 
-        yield "done", ChatResponse(
-            session_id=session_id,
-            answer=state.get("answer", "本次请求没有生成回答。"),
-            route=decision,
-            sources=state.get("sources", []),
-            tool_result=state.get("tool_result"),
+        yield (
+            "done",
+            ChatResponse(
+                session_id=session_id,
+                answer=state.get("answer", "本次请求没有生成回答。"),
+                route=decision,
+                sources=state.get("sources", []),
+                tool_result=state.get("tool_result"),
+            ),
         )
 
     def _build_graph(self) -> Any:
@@ -150,8 +166,17 @@ class AgentWorkflow:
         builder.add_edge("fallback", END)
         return builder.compile(checkpointer=self.checkpointer)
 
+    def _decide(self, state):
+        # Current explicit intent/safety wins; only enrich underspecified follow-ups.
+        current = self.router.decide(state["message"])
+        if current.route != RouteName.chat:
+            return current
+        contextual = self.router.decide(state.get("query", state["message"]))
+        # Historical tool/safety keywords must not execute an old action.
+        return contextual if contextual.route == RouteName.rag else current
+
     async def _supervisor_node(self, state: AgentState) -> AgentState:
-        return {"route": self.router.decide(state["message"])}
+        return {"route": self._decide(state)}
 
     def _select_branch(self, state: AgentState) -> str:
         decision = state.get("route")
@@ -160,7 +185,7 @@ class AgentWorkflow:
         return decision.route.value
 
     async def _rag_node(self, state: AgentState) -> AgentState:
-        sources = await self.retriever.search(state["message"])
+        sources = await self.retriever.search(state.get("query", state["message"]))
         answer = await self.llm.answer_with_context(_with_memory_context(state), sources)
         return {"sources": sources, "answer": answer}
 
@@ -178,19 +203,13 @@ class AgentWorkflow:
     async def _fallback_node(self, state: AgentState) -> AgentState:
         return {
             "answer": (
-                "这个请求触发了兜底分支。后续会在这里加入更完整的安全边界、"
-                "错误恢复和人工提示。"
+                "这个请求触发了兜底分支。后续会在这里加入更完整的安全边界、错误恢复和人工提示。"
             )
         }
 
 
 def _with_memory_context(state: AgentState) -> str:
-    memories = state.get("memories") or []
-    if not memories:
-        return state["message"]
-
-    memory_lines = "\n".join(f"- {memory}" for memory in memories)
-    return f"可参考的长期记忆：\n{memory_lines}\n\n用户当前问题：{state['message']}"
+    return format_context(state)
 
 
 def _planning_prompt(state: AgentState) -> str:

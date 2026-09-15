@@ -13,6 +13,7 @@ class SessionRecord:
     session_id: str
     user_id: str
     messages: list[MessageRecord] = field(default_factory=list)
+    summary: str = ""
 
 
 class InMemorySessionStore:
@@ -29,4 +30,3 @@ class InMemorySessionStore:
 
     def append(self, session_id: str, role: str, content: str) -> None:
         self._sessions[session_id].messages.append(MessageRecord(role=role, content=content))
-

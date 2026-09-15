@@ -7,6 +7,9 @@ class AgentState(TypedDict, total=False):
     user_id: str
     session_id: str
     message: str
+    query: str
+    history: list[dict[str, str]]
+    summary: str
     memories: list[str]
     route: RouteDecision
     sources: list[SourceChunk]

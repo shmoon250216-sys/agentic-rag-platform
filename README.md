@@ -8,7 +8,7 @@ GitHub：<https://github.com/shmoon250216-sys/agentic-rag-platform>
 
 - **入口分散**：将知识问答、结构化工具和复杂任务规划统一到一个聊天接口，由 Supervisor 决定执行分支。
 - **文档难检索**：解析 PDF/DOCX 后切分文档，分别执行 BM25 关键词召回和向量召回，通过 RRF 融合排名，并可选用 Reranker 精排；回答同时返回来源片段。
-- **连续服务缺少上下文**：使用 SQLite 保存会话和用户级长期记忆，并记录每次图运行的最终状态快照。
+- **连续追问缺少前文**：将最近对话、较早用户摘录和相关长期记忆注入模型；对常见省略追问补充前文主题后检索。语言与详略偏好按字段更新，记录设有过期和容量限制。
 - **外部依赖影响本地开发**：默认使用确定性的本地模型和 Hash Embedding，LLM、Embedding 与 Redis Stack 均通过适配层切换。
 - **修改容易破坏链路**：固定评测覆盖 RAG、工具、规划、聊天和安全兜底，并以自动化测试验证文档、缓存、记忆和接口行为。
 
@@ -45,7 +45,7 @@ flowchart LR
 - 可配置 HTTP Reranker；服务超时或响应异常时按配置回退到 RRF 排名。
 - 本地 Hash Embedding 与 OpenAI-compatible Embedding 适配器。
 - 内存知识库与 Redis Stack 检索后端；Redis 使用中文全文 BM25 与 RediSearch KNN 索引。
-- SQLite 会话记录、用户级长期记忆、敏感信息过滤和图状态审计快照。
+- SQLite 分层上下文：最近消息窗口、有界用户摘录摘要、跨会话长期记忆；偏好更新、过期/容量清理、会话归属校验和最终运行快照。详见 [`docs/memory.md`](docs/memory.md)。
 - MCP 风格工具注册表、参数 Schema 校验和标准化工具结果。
 - TTL 检索缓存与回答缓存，文档变更时主动失效。
 - 存活/就绪检查、Docker Compose、质量门禁与自动化测试。
@@ -85,7 +85,7 @@ python scripts/run_evaluation.py
 pytest -q
 ```
 
-当前测试集共收集 78 项；本地环境中 77 项通过，1 项 Redis Stack 集成测试在未启动 Redis 时跳过。评测数据与结果见 `app/evaluation/`、`docs/evaluation-results.json` 和 `docs/retrieval-evaluation-results.json`。
+当前测试集共收集 96 项；本地环境中 95 项通过，1 项 Redis Stack 集成测试在未启动 Redis 时跳过。评测数据与结果见 `app/evaluation/`、`docs/evaluation-results.json` 和 `docs/retrieval-evaluation-results.json`。
 
 检索专项评测使用仓库内 8 页、5764 字的合成制度文档和 8 个标注问题。当前离线 Hash Embedding 不具备真实语义能力，因此默认将 BM25/RRF 权重设为 `1.0/0.1`；专项结果中 BM25 的 Recall@3 为 100%，RRF 的 Recall@3 为 87.5%。该结果用于暴露本地向量模型的限制，不包装为线上效果。切换真实 Embedding 后应重新标定权重。
 
@@ -123,9 +123,13 @@ RERANK_FAIL_OPEN=true
 - 默认 `FakeLLMClient` 用于离线、确定性开发；配置 OpenAI-compatible Provider 后才会生成模型回答。
 - 默认 Hash Embedding 侧重可复现与零外部依赖，专项评测已显示它会给 RRF 引入噪声；真实语义检索效果需要配置外部 Embedding 模型后重建索引并重新评测。
 - Supervisor 与工具选择当前采用规则决策；`plan` 分支输出结构化计划，不执行自主多步工具循环。
-- SQLite 保存会话、长期记忆和最终图状态快照；当前 LangGraph checkpointer 为进程内实现，不支持跨进程从中间节点续跑。
+- SQLite 保存有界会话历史、用户摘录摘要、长期记忆和最终快照；进程内 LangGraph 检查点在每次图运行结束后释放，不支持跨进程从中间节点续跑。上下文采用字符预算，摘要为原文摘录，非 LLM 语义压缩；不使用 Mem0/Memobase。
 - Redis Stack 双路检索代码与可选集成测试已包含；当前本机未安装 Docker，因此 Redis 实机用例仍按环境条件跳过。
 - HTTP Reranker 的请求、排序和故障回退由自动化测试覆盖，但仓库不附带第三方模型密钥，也不宣称完成真实模型效果评测。
 - 开发 Token 与客户端传入的 `user_id` 适合本地验证，不等同于企业多租户鉴权。
 
 详细设计见 [`docs/architecture.md`](docs/architecture.md)，部署配置见 [`docs/deployment.md`](docs/deployment.md)。
+
+## 记忆管理验证
+
+本次新增 18 项记忆专项用例，验证普通与 SSE 上下文传递、连续追问检索、偏好更新、过期清理、容量上限、旧库迁移与同会话并发控制。全套 95 项通过，1 项 Redis 实机集成因环境未启用跳过。测试为本地机制验证，不代表真实大模型代词理解准确率。运行 `python -m pytest tests/test_memory_context.py -q` 可复现；设计、默认保留规则与配置见 [记忆说明](docs/memory.md)。

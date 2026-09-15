@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-15",
+  "command": "python -m pytest -q",
+  "total": 96,
+  "passed": 95,
+  "skipped": [
+    "test_document_survives_redis_store_recreation"
+  ],
+  "failed": [],
+  "memory_cases": [
+    "test_followup_retrieval_and_actual_model_context[False]",
+    "test_followup_retrieval_and_actual_model_context[True]",
+    "test_person_reference_has_history_and_does_not_leak_between_sessions",
+    "test_cross_user_session_denied_before_message_write",
+    "test_context_limits_summary_sources_and_new_topic",
+    "test_preferences_update_survive_restart_and_are_always_recalled",
+    "test_cross_session_memory_in_prompt",
+    "test_memory_capacity_expiry_and_user_isolation",
+    "test_session_retention_digest_and_snapshot_retention",
+    "test_same_session_requests_are_serialized",
+    "test_history_does_not_replay_a_tool_action",
+    "test_sensitive_and_transient_information_not_promoted",
+    "test_http_payload_contains_context_in_both_modes",
+    "test_http_rejects_cross_user_session_in_normal_and_stream",
+    "test_legacy_database_migration_and_preference_replacement",
+    "test_real_local_retrieval_uses_followup_topic",
+    "test_concurrent_first_use_schema_and_slot_updates",
+    "test_manual_preferences_share_update_policy"
+  ],
+  "scope": "Local deterministic providers, isolated temporary SQLite and mock HTTP. No external LLM quality claim. Redis integration skipped without live service.",
+  "static_check": "python -m ruff check app tests: passed"
+}

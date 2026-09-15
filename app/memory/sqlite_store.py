@@ -5,6 +5,8 @@ from uuid import uuid4
 import aiosqlite
 
 from app.core.config import get_settings
+from app.core.errors import AppError
+from app.memory.context import compact_summary
 from app.memory.store import MessageRecord, SessionRecord
 from app.schemas.session import MessageItem, SessionSummary
 
@@ -22,6 +24,12 @@ class SQLiteSessionStore:
             if session_id:
                 existing = await self._fetch_session(db, session_id)
                 if existing:
+                    if existing.user_id != user_id:
+                        raise AppError(
+                            code="SESSION_ACCESS_DENIED",
+                            message="Session belongs to another user",
+                            status_code=403,
+                        )
                     return existing
 
             new_session_id = session_id or str(uuid4())
@@ -68,9 +76,38 @@ class SQLiteSessionStore:
                     """,
                     (session_id,),
                 )
+            cursor = await db.execute(
+                """SELECT role, content FROM messages WHERE session_id = ?
+                   ORDER BY message_id DESC LIMIT -1 OFFSET ?""",
+                (session_id, get_settings().session_max_messages),
+            )
+            removed = list(reversed(await cursor.fetchall()))
+            if removed:
+                cursor = await db.execute(
+                    "SELECT context_summary FROM sessions WHERE session_id = ?", (session_id,)
+                )
+                row = await cursor.fetchone()
+                digest = compact_summary(
+                    row[0] or "",
+                    [r[1] for r in removed if r[0] == "user"],
+                    get_settings().context_summary_chars,
+                )
+                await db.execute(
+                    "UPDATE sessions SET context_summary = ? WHERE session_id = ?",
+                    (digest, session_id),
+                )
+            await db.execute(
+                """DELETE FROM messages WHERE session_id = ? AND message_id NOT IN (
+                    SELECT message_id FROM messages WHERE session_id = ?
+                    ORDER BY message_id DESC LIMIT ?
+                )""",
+                (session_id, session_id, get_settings().session_max_messages),
+            )
             await db.commit()
 
-    async def list_sessions(self, user_id: str | None = None, limit: int = 20) -> list[SessionSummary]:
+    async def list_sessions(
+        self, user_id: str | None = None, limit: int = 20
+    ) -> list[SessionSummary]:
         await self._ensure_schema()
         params: tuple[object, ...]
         where_clause = ""
@@ -146,7 +183,7 @@ class SQLiteSessionStore:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT session_id, user_id
+            SELECT session_id, user_id, context_summary
             FROM sessions
             WHERE session_id = ?
             """,
@@ -169,7 +206,12 @@ class SQLiteSessionStore:
             MessageRecord(role=message["role"], content=message["content"])
             for message in await message_cursor.fetchall()
         ]
-        return SessionRecord(session_id=row["session_id"], user_id=row["user_id"], messages=messages)
+        return SessionRecord(
+            session_id=row["session_id"],
+            user_id=row["user_id"],
+            messages=messages,
+            summary=row["context_summary"] or "",
+        )
 
     async def _ensure_schema(self) -> None:
         if self._initialized:
@@ -178,6 +220,7 @@ class SQLiteSessionStore:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.database_path) as db:
             await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("BEGIN IMMEDIATE")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -189,6 +232,11 @@ class SQLiteSessionStore:
                 )
                 """
             )
+            cursor = await db.execute("PRAGMA table_info(sessions)")
+            if "context_summary" not in {row[1] for row in await cursor.fetchall()}:
+                await db.execute(
+                    "ALTER TABLE sessions ADD COLUMN context_summary TEXT NOT NULL DEFAULT ''"
+                )
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS messages (
@@ -239,9 +287,7 @@ class SQLiteSessionStore:
             """
         )
         updates = [
-            (_generate_session_title(row[1]), row[0])
-            for row in await cursor.fetchall()
-            if row[1]
+            (_generate_session_title(row[1]), row[0]) for row in await cursor.fetchall() if row[1]
         ]
         if updates:
             await db.executemany(

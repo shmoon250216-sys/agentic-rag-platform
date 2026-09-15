@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -48,6 +49,15 @@ class Settings(BaseSettings):
     redis_connect_timeout_seconds: float = 2
     redis_socket_timeout_seconds: float = 5
     sqlite_url: str = "sqlite:///./data/app.db"
+    context_recent_messages: int = Field(default=6, ge=2, le=30)
+    context_history_chars: int = Field(default=6000, ge=500, le=30000)
+    context_message_chars: int = Field(default=2000, ge=100, le=4000)
+    context_summary_chars: int = Field(default=1200, ge=100, le=4000)
+    session_max_messages: int = Field(default=100, ge=10, le=1000)
+    session_max_checkpoints: int = Field(default=30, ge=1, le=1000)
+    memory_max_items: int = Field(default=100, ge=5, le=1000)
+    memory_ttl_days: int = Field(default=180, ge=1, le=3650)
+    memory_item_chars: int = Field(default=320, ge=80, le=1000)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

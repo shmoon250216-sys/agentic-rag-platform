@@ -32,6 +32,13 @@ class SQLiteGraphCheckpointStore:
                 """,
                 (session_id, route, state_json),
             )
+            await db.execute(
+                """DELETE FROM graph_checkpoints WHERE session_id = ? AND checkpoint_id NOT IN (
+                    SELECT checkpoint_id FROM graph_checkpoints WHERE session_id = ?
+                    ORDER BY checkpoint_id DESC LIMIT ?
+                )""",
+                (session_id, session_id, get_settings().session_max_checkpoints),
+            )
             await db.commit()
             return int(cursor.lastrowid)
 

@@ -20,7 +20,8 @@ def test_memories_api_lists_extracted_memories() -> None:
     assert chat_response.status_code == 200
     assert memories_response.status_code == 200
     contents = [memory["content"] for memory in memories_response.json()["memories"]]
-    assert any("用户偏好" in content for content in contents)
+    assert "回答语言：中文" in contents
+    assert "回答详略：详细" in contents
     assert any("用户长期目标" in content for content in contents)
 
 
