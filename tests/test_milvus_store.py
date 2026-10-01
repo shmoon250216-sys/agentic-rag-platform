@@ -70,7 +70,7 @@ class Client:
         rows = list(self.rows.values())
         if anns_field == "dense":
             rows.reverse()
-        return [[{"id": r["chunk_id"], "distance": 1.0/(i+1), "entity": r}
+        return [[{"chunk_id": r["chunk_id"], "distance": 1.0/(i+1), "entity": r}
                  for i, r in enumerate(rows)]]
 
     def close(self):

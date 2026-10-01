@@ -250,8 +250,12 @@ class MilvusKnowledgeBase:
             for hit in hits:
                 if hit["distance"] <= 0:
                     continue
-                entities[hit["id"]] = hit["entity"]
-                ranking.append(RankedItem(item=hit["id"], score=hit["distance"]))
+                # PyMilvus 2.6 returns the actual primary-field name, not generic "id".
+                chunk_id = hit.get("chunk_id", hit.get("id"))
+                if not chunk_id:
+                    raise ValueError("Milvus search result missing chunk primary key")
+                entities[chunk_id] = hit["entity"]
+                ranking.append(RankedItem(item=chunk_id, score=hit["distance"]))
             rankings.append(ranking)
         fused = normalize_scores(reciprocal_rank_fusion(
             rankings, rrf_k=self.rrf_k, weights=self.weights))
