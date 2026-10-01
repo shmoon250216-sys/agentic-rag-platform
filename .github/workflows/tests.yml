@@ -22,6 +22,8 @@ jobs:
           docker compose -f compose.milvus.yml restart milvus
           for i in $(seq 1 90); do curl -fsS http://127.0.0.1:9091/healthz && break || sleep 2; done
           python scripts/check_milvus_restart.py read
+      - name: HTTP PDF upload retrieval and deletion
+        run: python scripts/check_milvus_api.py
       - name: Logs and results
         if: always()
         run: docker compose -f compose.milvus.yml logs --no-color > milvus-service.log
@@ -33,3 +35,4 @@ jobs:
             *results.xml
             milvus-service.log
             milvus-restart-result.json
+            milvus-api-result.json
