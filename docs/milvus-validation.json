@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-10-01",
+  "implementation_commit": "5a0583f72d7337ae117997c833c7f039eec90189",
+  "ci_url": "https://github.com/shmoon250216-sys/agentic-rag-platform/actions/runs/36874042116",
+  "ci_conclusion": "success",
+  "server": "Milvus Standalone 2.6.0",
+  "sdk": "PyMilvus 2.6.17",
+  "local_regression": {
+    "passed": 107,
+    "skipped": 2
+  },
+  "real_server_integration_passed": 1,
+  "server_restart_persistence": true,
+  "http_pdf_upload_chat_citation_delete": true,
+  "embedding": "hash, deterministic test vectors; not semantic quality validation",
+  "local_windows_server_started": false,
+  "boundary": "Windows 缺少 Docker/WSL；真实服务器验收在 GitHub Ubuntu runner 完成。没有准确率或性能提升主张。"
+}

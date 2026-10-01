@@ -14,7 +14,7 @@
 
 ## 部署与运行
 
-Windows 需要先具备 Docker Desktop 的 Linux 容器环境（通常依赖 WSL2）。该项目不自动安装系统组件。Compose 基于 [Milvus 官方 Standalone 配置](https://github.com/milvus-io/milvus/blob/v2.6.0/deployments/docker/standalone/docker-compose.yml)，固定 Milvus 2.6.0 与 PyMilvus 2.6.x；本地端口仅绑定 127.0.0.1。
+Windows 需要先具备 Docker Desktop 的 Linux 容器环境（通常依赖 WSL2）。该项目不自动安装系统组件。Compose 基于 [Milvus 官方 Standalone 配置](https://github.com/milvus-io/milvus/blob/v2.6.0/deployments/docker/standalone/docker-compose.yml)，固定 Milvus 2.6.0 与 PyMilvus 2.6.x；对象存储使用 Milvus 官方维护的 `milvusdb/minio:RELEASE.2024-12-18T13-15-44Z` 镜像；本地端口仅绑定 127.0.0.1。
 
 ```powershell
 pip install -e ".[dev]"
@@ -38,7 +38,7 @@ uvicorn app.main:create_app --factory --port 8010
 curl http://127.0.0.1:8010/health/ready
 ```
 
-首次就绪检查创建并校验空 Collection，不自动添加示例制度。随后从网页上传 `examples/documents/` 的制度 PDF，再在系统信息中确认 backend=milvus、persistent=true。`/health` 只检查 API 存活，`/health/ready` 同时检查数据库与索引。
+首次就绪检查创建并校验空 Collection，不自动添加示例制度。Windows 也可用 `powershell -File scripts/start_milvus.ps1 -Python .venv/Scripts/python.exe` 启动数据库与 API；脚本只为本次进程选择 Milvus，不改写 `.env` 或密钥。随后从网页上传 `examples/documents/` 的制度 PDF，再在系统信息中确认 backend=milvus、persistent=true。`/health` 只检查 API 存活，`/health/ready` 同时检查数据库与索引。
 
 全栈启动也可执行 `docker compose up -d --wait --wait-timeout 300`；它使用 Milvus 后端。至少 Docker Compose 2.20，支持 include。停服务使用 `docker compose down`；不要加 `-v`，该参数会删除命名卷及文档。
 
@@ -64,8 +64,12 @@ docker compose -f compose.milvus.yml restart milvus
 python scripts/check_milvus_restart.py read
 ```
 
-真实服务测试使用独立随机 Collection，并清理自己的数据，覆盖中文 BM25/向量/RRF、客户端重建、全分片删除、模型版本拒绝；重启脚本跨两个 Python 进程和一次数据库服务重启检查数据保留。GitHub Actions 启动真实 Standalone，并上传 JUnit、服务日志和重启结果。无服务时集成测试明确跳过，不当成通过。
+真实服务测试使用独立随机 Collection，并清理自己的数据，覆盖中文 BM25/向量/RRF、客户端重建、全分片删除、模型版本拒绝；重启脚本跨两个 Python 进程和一次数据库服务重启检查数据保留。GitHub Actions 启动真实 Standalone，并上传 JUnit、服务日志、重启结果和 HTTP 验收结果。HTTP 验收另启动独立 FastAPI 进程，上传仓库合成 PDF，核对问答来源并删除文档。无服务时集成测试明确跳过，不当成通过。
 
 ## 下一阶段评测
 
 先建立多文档、证据标注与无答案问题，按文档/主题划分开发集和独立测试集；对 BM25、向量、RRF、Reranker 比较 Recall@K、MRR、引用正确性、拒答及 P50/P95 延迟。先接真实 Embedding 再调融合权重，记录模型、Collection、切分参数和数据版本。当前改动不宣称检索准确率或性能提升。
+
+## 已完成的验收（2026-10-01）
+
+[真实服务 CI](https://github.com/shmoon250216-sys/agentic-rag-platform/actions/runs/36874042116) 全部通过：107 项离线回归、1 项真实数据库集成、数据库服务重启保留，以及 HTTP PDF 上传/问答引用/删除。离线阶段 2 项数据库测试因环境跳过，Milvus 已在后续专用步骤真实执行；Redis 未实测。详细口径见 [milvus-validation.json](milvus-validation.json)。本机没有 Docker/WSL，尚未启动 Windows 本地 Milvus，`.env` 也未被静默切换。

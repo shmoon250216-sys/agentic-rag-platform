@@ -12,7 +12,7 @@ app/api       HTTP 接口、鉴权、请求响应
 app/services 业务编排层
 app/graph    Supervisor 路由与 Agent 工作流
 app/rag      文档处理、BM25/向量召回、RRF 融合与可选精排
-app/tools    MCP 工具注册、调用、结果解析
+app/tools    本地工具注册、参数校验与调用（MCP 风格接口，非 MCP 协议）
 app/memory   SQLite 会话存储与 LangGraph checkpoint
 app/llm      LLM provider 适配层
 app/schemas  Pydantic schema
@@ -45,6 +45,7 @@ query -> tokenize/embed
       -> vector KNN top-N --┴-> weighted RRF -> optional HTTP reranker -> top-K
 ```
 
+- Milvus 后端使用原生 Jieba/BM25 稀疏倒排和 HNSW/COSINE 向量索引；分片及元数据持久化，SDK 在线程中执行。详见 [milvus.md](milvus.md)。
 - 内存后端使用项目内的标准 BM25 公式和余弦相似度遍历分片。
 - Redis Stack 后端通过中文全文索引的 `BM25STD` scorer 和向量 KNN 查询形成两张候选榜单。
 - RRF 只使用名次，不直接比较 BM25 分数和余弦分数；两路权重和常数 `k` 均可配置。

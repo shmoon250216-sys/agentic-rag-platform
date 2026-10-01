@@ -1,55 +1,37 @@
 # Deployment
 
-## Milvus 更新（2026-10-01）
+## 本地开发与 Milvus
 
-全栈部署现使用 Milvus Standalone，部署、数据 Schema、中文 BM25/HNSW 检索、生命周期及故障边界见 [milvus.md](milvus.md)。本文原 Redis 配置仍为兼容模式，启动用 `docker compose -f compose.redis.yml up -d`；不再是默认全栈配置。
+Python 3.11+，先安装 `pip install -e ".[dev]"`。`.env.example` 使用 `RAG_BACKEND=memory` 的离线开发模式；文档不持久化。完整 Milvus 配置及工程边界见 [milvus.md](milvus.md)。
 
-
-当前项目已经具备 Docker Compose 本地部署和冒烟检查能力。
-
-## 本地开发启动
+Windows 已配置 Docker Desktop Linux 容器后可运行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010
+powershell -File scripts/start_milvus.ps1 -Python .venv/Scripts/python.exe
 ```
 
-## Docker Compose 启动
+脚本启动数据库，随后为这次 API 进程选择 Milvus，不改写 `.env` 中的模型密钥。
+
+## 全栈 Compose
+
+要求 Docker Compose 2.20+，先从 `.env.example` 创建本地 `.env`。执行：
 
 ```powershell
-docker compose up --build
+docker compose up -d --build --wait --wait-timeout 300
 ```
 
-启动后访问：
+服务组成：FastAPI/LangGraph API、Milvus Standalone、etcd 元数据存储、MinIO 对象存储。API 使用 Milvus 后端，数据库服务挂载命名卷，SQLite 数据绑定 `./data`。
 
-```text
-http://127.0.0.1:8010/docs
-http://127.0.0.1:8010/health
-http://127.0.0.1:8010/health/ready
-```
+- 网页：http://127.0.0.1:8010/
+- 存活：http://127.0.0.1:8010/health
+- 依赖就绪：http://127.0.0.1:8010/health/ready（包含 Collection/索引验证）
 
-## 冒烟检查
+Milvus 不自动填充默认制度，先上传合成 PDF 再问答。停止服务使用 `docker compose down`，不要加 `-v`。更换 Embedding 必须换 Collection、修订号并重导文档。
 
-本地服务启动后运行：
+## 验收与兼容模式
 
-```powershell
-.\.venv\Scripts\python.exe scripts\smoke_test.py --base-url http://127.0.0.1:8010
-```
+真实 Standalone 和 HTTP 验收见 [milvus-validation.json](milvus-validation.json)。本机尚未配置 Docker/WSL，数据库实测发生在 GitHub Ubuntu runner，不等同于本地 Windows 启动。
 
-检查内容：
+原 Redis 部署保存在 `compose.redis.yml`，可执行 `docker compose -f compose.redis.yml up -d`；`RAG_BACKEND=redis` 仍为兼容选项。它不会自动迁移到 Milvus。
 
-- `/health` 和 `/health/ready` 是否可用。
-- `/api/v1/tools` 是否能列出工具。
-- `/api/v1/chat` 是否能完成一次 RAG 问答。
-
-## Compose 服务
-
-```text
-api: FastAPI + LangGraph Agent 服务
-redis: Redis Stack，保存 RAG 文档、分片和向量索引
-```
-
-本地直接启动时由 `.env` 决定使用 `memory` 或 `redis`。Docker Compose 会启用 Redis 后端，并通过 AOF、快照和具名数据卷保存数据；启动后可通过 `/health/ready` 检查 Redis 与索引状态。
-
-Redis 后端会建立中文全文 BM25 与 KNN 向量索引，再用 RRF 融合两路结果。`idx:rag_chunks:v2` 是本次检索结构对应的默认索引名；从旧版升级时应使用新索引名重新入库。
-
-Reranker 默认关闭。部署外部精排服务后设置 `RERANK_PROVIDER=http`、`RERANK_URL`、`RERANK_MODEL` 和密钥；保留 `RERANK_FAIL_OPEN=true` 可在精排服务超时或响应异常时回退到 RRF 结果。
+HTTP Reranker 默认关闭；配置提供方后保留 `RERANK_FAIL_OPEN=true` 可在超时或异常时回退 RRF。真实 Embedding/Reranker 质量与负载表现需单独评测。

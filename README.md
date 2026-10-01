@@ -85,7 +85,7 @@ python scripts/run_evaluation.py
 pytest -q
 ```
 
-Milvus 更新后的本地回归为 107 项通过、2 项真实数据库集成按环境跳过（Redis、Milvus）。真实 Milvus 验收另由 GitHub Actions 启动 Standalone，结果以 Actions 与上传日志为准；见 [Milvus 说明](docs/milvus.md)。评测数据与结果见 `app/evaluation/`、`docs/evaluation-results.json` 和 `docs/retrieval-evaluation-results.json`。
+Milvus 更新后的本地回归为 107 项通过、2 项真实数据库集成按环境跳过（Redis、Milvus）。[真实 Milvus CI](https://github.com/shmoon250216-sys/agentic-rag-platform/actions/runs/36874042116) 已通过 Standalone 入库/混合检索/删除、数据库服务重启保留以及 HTTP PDF 上传/问答引用验收；见 [Milvus 说明](docs/milvus.md)。评测数据与结果见 `app/evaluation/`、`docs/evaluation-results.json` 和 `docs/retrieval-evaluation-results.json`。
 
 检索专项评测使用仓库内 8 页、5764 字的合成制度文档和 8 个标注问题。当前离线 Hash Embedding 不具备真实语义能力，因此默认将 BM25/RRF 权重设为 `1.0/0.1`；专项结果中 BM25 的 Recall@3 为 100%，RRF 的 Recall@3 为 87.5%。该结果用于暴露本地向量模型的限制，不包装为线上效果。切换真实 Embedding 后应重新标定权重。
 
