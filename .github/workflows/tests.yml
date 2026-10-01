@@ -1,0 +1,35 @@
+name: RAG tests and real Milvus
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -e '.[dev]'
+      - run: ruff check app tests
+      - run: pytest -q --junitxml=unit-results.xml
+      - name: Start real Milvus Standalone
+        run: docker compose -f compose.milvus.yml up -d --wait --wait-timeout 300
+      - name: Real database lifecycle tests
+        env: {MILVUS_TEST_URI: 'http://127.0.0.1:19530'}
+        run: pytest -q tests/test_milvus_integration.py --junitxml=milvus-results.xml
+      - name: Database restart persistence
+        run: |
+          python scripts/check_milvus_restart.py write
+          docker compose -f compose.milvus.yml restart milvus
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:9091/healthz && break || sleep 2; done
+          python scripts/check_milvus_restart.py read
+      - name: Logs and results
+        if: always()
+        run: docker compose -f compose.milvus.yml logs --no-color > milvus-service.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: milvus-validation
+          path: |
+            *results.xml
+            milvus-service.log
+            milvus-restart-result.json

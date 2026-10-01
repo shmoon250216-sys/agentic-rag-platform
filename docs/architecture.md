@@ -1,5 +1,10 @@
 # Architecture
 
+## Milvus 更新（2026-10-01）
+
+全栈部署现使用 Milvus Standalone，部署、数据 Schema、中文 BM25/HNSW 检索、生命周期及故障边界见 [milvus.md](milvus.md)。本文原 Redis 配置仍为兼容模式，启动用 `docker compose -f compose.redis.yml up -d`；不再是默认全栈配置。
+
+
 ## 分层结构
 
 ```text

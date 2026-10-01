@@ -14,6 +14,7 @@ from app.llm.client import llm_response_cache
 from app.rag.factory import get_knowledge_base
 from app.rag.document_parser import DocumentParseError, parse_uploaded_document
 from app.rag.redis_store import RedisKnowledgeBase
+from app.rag.milvus_store import MilvusKnowledgeBase
 from app.rag.retriever import retrieval_cache
 from app.schemas.checkpoint import GraphCheckpointDetailResponse, GraphCheckpointListResponse
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -292,7 +293,7 @@ async def _maybe_await(value):
 
 async def _rag_status(require_available: bool = False) -> dict[str, object]:
     store = get_knowledge_base()
-    if isinstance(store, RedisKnowledgeBase):
+    if isinstance(store, (RedisKnowledgeBase, MilvusKnowledgeBase)):
         if require_available:
             await store.ensure_available()
         return await store.health()

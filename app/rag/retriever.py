@@ -27,7 +27,7 @@ class KnowledgeBaseRetriever:
         cache_key = make_cache_key(
             "rag-search",
             {
-                "store": type(self.store).__name__,
+                "store": getattr(self.store, "cache_namespace", type(self.store).__name__),
                 "query": query,
                 "top_k": top_k,
                 "reranker": type(self.reranker).__name__,

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     quality_min_tool_accuracy: float = 0.95
     quality_max_average_latency_ms: float = 500
     rag_backend: str = "memory"
+    milvus_uri: str = "http://127.0.0.1:19530"
+    milvus_token: str = ""
+    milvus_collection: str = "rag_chunks_v1"
+    milvus_timeout_seconds: float = Field(default=15, gt=0)
+    milvus_embedding_revision: str = "hash-v1"
     rag_index_name: str = "idx:rag_chunks:v2"
     rag_vector_dimensions: int = 256
     rag_candidate_multiplier: int = 4

@@ -4,6 +4,7 @@ from app.core.config import get_settings
 from app.rag.factory import get_knowledge_base
 from app.rag.redis_store import RedisKnowledgeBase
 from app.rag.store import InMemoryKnowledgeBase
+from app.rag.milvus_store import MilvusKnowledgeBase
 
 
 @pytest.fixture(autouse=True)
@@ -47,4 +48,20 @@ def test_rag_factory_rejects_vector_dimension_mismatch(monkeypatch) -> None:
     monkeypatch.setenv("RAG_VECTOR_DIMENSIONS", "128")
 
     with pytest.raises(ValueError, match="RAG_VECTOR_DIMENSIONS must match"):
+        get_knowledge_base()
+
+
+def test_rag_factory_selects_milvus_without_connecting(monkeypatch) -> None:
+    monkeypatch.setenv("RAG_BACKEND", "milvus")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "hash")
+    monkeypatch.setenv("EMBEDDING_DIMENSIONS", "32")
+    monkeypatch.setenv("RAG_VECTOR_DIMENSIONS", "32")
+    backend = get_knowledge_base()
+    assert isinstance(backend, MilvusKnowledgeBase)
+    assert backend._client is None
+
+
+def test_unknown_backend_does_not_silently_use_memory(monkeypatch) -> None:
+    monkeypatch.setenv("RAG_BACKEND", "milvuss")
+    with pytest.raises(ValueError, match="RAG_BACKEND"):
         get_knowledge_base()
