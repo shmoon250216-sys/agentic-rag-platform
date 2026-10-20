@@ -46,7 +46,10 @@ class ChatService:
             memories=[memory.content for memory in memories],
             context=context,
         )
-        await self.sessions.append(session.session_id, "assistant", response.answer)
+        await self.sessions.append(
+            session.session_id, "assistant", response.answer,
+            evidence={"sources": [s.model_dump(mode="json") for s in response.sources],
+                      "citation_warnings": response.citation_warnings})
         await self.checkpoints.append(
             session_id=session.session_id,
             route=response.route.route.value,
@@ -95,7 +98,10 @@ class ChatService:
         if final_response is None:
             return
 
-        await self.sessions.append(session.session_id, "assistant", final_response.answer)
+        await self.sessions.append(
+            session.session_id, "assistant", final_response.answer,
+            evidence={"sources": [s.model_dump(mode="json") for s in final_response.sources],
+                      "citation_warnings": final_response.citation_warnings})
         await self.checkpoints.append(
             session_id=session.session_id,
             route=final_response.route.route.value,

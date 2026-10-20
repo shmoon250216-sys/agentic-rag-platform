@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from app.schemas.chat import SourceChunk
 
 
 class SessionSummary(BaseModel):
@@ -18,6 +19,8 @@ class MessageItem(BaseModel):
     role: str
     content: str
     created_at: datetime
+    sources: list[SourceChunk] = Field(default_factory=list)
+    citation_warnings: list[str] = Field(default_factory=list)
 
 
 class SessionListResponse(BaseModel):

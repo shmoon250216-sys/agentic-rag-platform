@@ -108,28 +108,63 @@ function appendStreamingAssistant() {
 }
 
 function appendResponseDetails(bubble, extra = {}) {
-  if (!extra.route && !extra.sources?.length && !extra.toolResult) return;
+  if (!extra.route && !extra.sources?.length && !extra.toolResult && !extra.citationWarnings?.length) return;
 
   const details = createElement("details", "response-details");
   const summary = createElement("summary", "", "查看执行详情");
   details.appendChild(summary);
+  if (extra.citationWarnings?.length) {
+    details.appendChild(createElement("p", "", extra.citationWarnings.join("；")));
+  }
 
   if (extra.route) {
     const meta = createElement("div", "meta");
     meta.appendChild(createPill(`分支：${routeLabel(extra.route.route)}`));
-    meta.appendChild(createPill(`置信度：${Math.round(extra.route.confidence * 100)}%`));
+    meta.appendChild(createPill(`路由：${extra.route.source || "历史记录"} · ${extra.route.status || "selected"}`));
     if (extra.route.reason) meta.appendChild(createPill(extra.route.reason));
     details.appendChild(meta);
   }
 
   if (extra.sources?.length) {
     const sources = createElement("div", "sources");
-    extra.sources.forEach((source) => {
+    extra.sources.forEach((source, index) => {
+      const fullSnippet = source.snippet || "";
+      const characters = Array.from(fullSnippet);
+      const truncated = characters.length > 220;
+      const preview = truncated ? `${characters.slice(0, 220).join("")}…` : fullSnippet;
       const item = createElement("div", "source");
       item.append(
-        createElement("strong", "", `${source.title} · 相关度 ${Math.round(source.score * 100)}%`),
-        createElement("span", "", source.snippet),
+        createElement("strong", "", `[${source.citation_id || `S${index + 1}`}] ${source.title} · 排序分 ${Number(source.score).toFixed(4)}（非正确概率）`),
+        createElement("span", "", preview),
       );
+      if (source.chunk_id) {
+        item.appendChild(createElement("small", "", `分片 ${source.chunk_id} · SHA256 ${(source.content_sha256 || "").slice(0, 12)}`));
+      }
+      if (source.evidence_url?.startsWith("/api/v1/documents/")) {
+        const verify = createElement("button", "", "核验当前原文片段");
+        verify.type = "button";
+        verify.addEventListener("click", async () => {
+          verify.disabled = true;
+          try {
+            const evidence = await fetchJson(source.evidence_url, { headers: authHeaders() });
+            const matches = evidence.content_sha256 === source.content_sha256 && evidence.snippet === fullSnippet;
+            item.appendChild(createElement("p", "", matches
+              ? "核验通过：当前数据库片段与本次引用一致。此检查不判断回答是否正确。"
+              : "证据不一致，请重新提问。"));
+          } catch (error) {
+            item.appendChild(createElement("p", "", `核验失败：${error.message}`));
+          } finally { verify.disabled = false; }
+        });
+        item.appendChild(verify);
+      }
+      if (truncated) {
+        const fullEvidence = createElement("details", "source-evidence");
+        fullEvidence.append(
+          createElement("summary", "", "展开完整引用"),
+          createElement("span", "", fullSnippet),
+        );
+        item.appendChild(fullEvidence);
+      }
       sources.appendChild(item);
     });
     details.appendChild(sources);
@@ -384,6 +419,7 @@ async function sendMessage(message) {
       route: donePayload.route,
       sources: donePayload.sources,
       toolResult: donePayload.tool_result,
+      citationWarnings: donePayload.citation_warnings,
     });
     await Promise.all([refreshSessions(), refreshMemories()]);
   } catch (error) {
@@ -504,7 +540,10 @@ async function loadSession(selectedSessionId, selectedTitle) {
     setRoute(null);
     resetChatLog();
     payload.messages.forEach((message) => {
-      appendMessage(message.role === "assistant" ? "assistant" : "user", message.content);
+      appendMessage(message.role === "assistant" ? "assistant" : "user", message.content, {
+        sources: message.sources,
+        citationWarnings: message.citation_warnings,
+      });
     });
     await refreshSessions();
     closeDrawers();
@@ -544,6 +583,12 @@ async function refreshDocuments() {
           `${documentItem.chunk_count} 个片段 · ${documentItem.content_length} 字符`,
         ),
       );
+      if (documentItem.original_filename) {
+        const downloadBtn = createElement("button", "", "下载原件");
+        downloadBtn.type = "button";
+        downloadBtn.addEventListener("click", () => downloadOriginal(documentItem));
+        card.appendChild(downloadBtn);
+      }
       docList.appendChild(card);
     });
   } catch (error) {
@@ -654,16 +699,41 @@ async function uploadDocument() {
       },
       "文件上传失败",
     );
-    docStatus.textContent = `已解析并收录：${payload.document.title}`;
     docFileInput.value = "";
     fileTitleInput.value = "";
     selectDocumentFile(null);
     await refreshDocuments();
+    docStatus.textContent = payload.reused
+      ? `文件已存在，已复用：${payload.document.title}（未重复解析或生成向量）`
+      : `已解析并收录，原件已保存：${payload.document.title}`;
   } catch (error) {
     docStatus.textContent = `上传失败：${error.message}`;
   } finally {
     uploadDocBtn.textContent = "解析并加入知识库";
     uploadDocBtn.disabled = !selectedDocumentFile;
+  }
+}
+
+async function downloadOriginal(documentItem) {
+  try {
+    const response = await fetch(
+      `/api/v1/documents/${encodeURIComponent(documentItem.doc_id)}/original`,
+      { headers: authHeaders() },
+    );
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error?.message || "原件下载失败");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = documentItem.original_filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    docStatus.textContent = `下载失败：${error.message}`;
   }
 }
 

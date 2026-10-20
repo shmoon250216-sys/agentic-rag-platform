@@ -12,4 +12,5 @@ os.environ["RAG_BACKEND"] = "memory"
 os.environ["RERANK_PROVIDER"] = "none"
 # Singletons are constructed during collection. Never reuse the developer's DB.
 _test_data = tempfile.TemporaryDirectory(prefix="agentic-rag-tests-")
+os.environ["DOCUMENT_STORAGE_DIR"] = str(Path(_test_data.name) / "documents")
 os.environ["SQLITE_URL"] = f"sqlite:///{Path(_test_data.name) / 'app.db'}"

@@ -20,8 +20,13 @@ class ChatRequest(BaseModel):
 
 class RouteDecision(BaseModel):
     route: RouteName
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
     reason: str
+    source: str = "rule"
+    status: str = "selected"
+    tool_name: str | None = None
+    tool_arguments: dict[str, Any] = Field(default_factory=dict)
+    clarification_question: str | None = None
 
 
 class SourceChunk(BaseModel):
@@ -29,6 +34,11 @@ class SourceChunk(BaseModel):
     title: str
     snippet: str
     score: float
+    chunk_id: str | None = None
+    chunk_index: int | None = None
+    content_sha256: str | None = None
+    citation_id: str | None = None
+    evidence_url: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -37,3 +47,4 @@ class ChatResponse(BaseModel):
     route: RouteDecision
     sources: list[SourceChunk] = Field(default_factory=list)
     tool_result: dict[str, Any] | None = None
+    citation_warnings: list[str] = Field(default_factory=list)

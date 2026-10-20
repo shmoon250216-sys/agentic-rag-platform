@@ -8,10 +8,11 @@ from app.core.config import get_settings
 from app.memory.context import ConversationContext, format_context
 from app.llm.client import LLMClient, get_llm_client
 from app.rag.retriever import KnowledgeBaseRetriever
+from app.rag.evidence import citation_warnings
 from app.schemas.chat import ChatRequest, ChatResponse, RouteName
 from app.tools.registry import ToolRegistry
 
-from .router import SupervisorRouter
+from .semantic_router import SemanticRouter, fallback_answer
 from .state import AgentState
 
 
@@ -19,9 +20,9 @@ class AgentWorkflow:
     """LangGraph supervisor workflow for adaptive routing."""
 
     def __init__(self, llm: LLMClient | None = None) -> None:
-        self.router = SupervisorRouter()
         self.retriever = KnowledgeBaseRetriever()
         self.tools = ToolRegistry()
+        self.router = SemanticRouter(get_settings(), self.tools)
         self.llm = llm or get_llm_client(get_settings())
         self.checkpointer = MemorySaver()
         self.graph = self._build_graph()
@@ -62,6 +63,9 @@ class AgentWorkflow:
             route=decision,
             sources=result.get("sources", []),
             tool_result=result.get("tool_result"),
+            citation_warnings=(citation_warnings(result.get("answer", ""),
+                                                result.get("sources", []))
+                               if decision.route == RouteName.rag else []),
         )
 
     async def stream(
@@ -83,7 +87,7 @@ class AgentWorkflow:
             "tool_result": None,
             "error": None,
         }
-        decision = self._decide(state)
+        decision = await self._decide(state)
         state["route"] = decision
         yield "route", decision
 
@@ -99,7 +103,7 @@ class AgentWorkflow:
                 yield "token", token
             state["answer"] = "".join(answer_parts)
         elif decision.route == RouteName.tool:
-            tool_result = await self.tools.run_best_effort(state["message"])
+            tool_result = await self._execute_tool(state)
             state["tool_result"] = tool_result
             answer_parts = []
             async for token in self.llm.stream_answer_with_tool_result(
@@ -122,9 +126,7 @@ class AgentWorkflow:
                 yield "token", token
             state["answer"] = "".join(answer_parts)
         else:
-            state["answer"] = (
-                "这个请求触发了兜底分支。后续会在这里加入更完整的安全边界、错误恢复和人工提示。"
-            )
+            state["answer"] = fallback_answer(decision)
             yield "token", state["answer"]
 
         yield (
@@ -135,6 +137,9 @@ class AgentWorkflow:
                 route=decision,
                 sources=state.get("sources", []),
                 tool_result=state.get("tool_result"),
+                citation_warnings=(citation_warnings(state.get("answer", ""),
+                                                    state.get("sources", []))
+                                   if decision.route == RouteName.rag else []),
             ),
         )
 
@@ -166,17 +171,22 @@ class AgentWorkflow:
         builder.add_edge("fallback", END)
         return builder.compile(checkpointer=self.checkpointer)
 
-    def _decide(self, state):
-        # Current explicit intent/safety wins; only enrich underspecified follow-ups.
-        current = self.router.decide(state["message"])
-        if current.route != RouteName.chat:
-            return current
-        contextual = self.router.decide(state.get("query", state["message"]))
-        # Historical tool/safety keywords must not execute an old action.
-        return contextual if contextual.route == RouteName.rag else current
+    async def _decide(self, state):
+        return await self.router.decide(state)
+
+    async def _execute_tool(self, state):
+        decision = state["route"]
+        if decision.source == "rule_offline":
+            return await self.tools.run_best_effort(state["message"])
+        if decision.tool_name is None:
+            return {"ok": False, "error": "Missing validated tool selection"}
+        # Validate again at the execution boundary; no keyword reselection.
+        arguments = self.tools.validate_arguments(decision.tool_name, decision.tool_arguments)
+        result = await self.tools.call_tool(decision.tool_name, arguments)
+        return result.model_dump()
 
     async def _supervisor_node(self, state: AgentState) -> AgentState:
-        return {"route": self._decide(state)}
+        return {"route": await self._decide(state)}
 
     def _select_branch(self, state: AgentState) -> str:
         decision = state.get("route")
@@ -190,7 +200,7 @@ class AgentWorkflow:
         return {"sources": sources, "answer": answer}
 
     async def _tool_node(self, state: AgentState) -> AgentState:
-        tool_result = await self.tools.run_best_effort(state["message"])
+        tool_result = await self._execute_tool(state)
         answer = await self.llm.answer_with_tool_result(_with_memory_context(state), tool_result)
         return {"tool_result": tool_result, "answer": answer}
 
@@ -201,11 +211,7 @@ class AgentWorkflow:
         return {"answer": await self.llm.chat(_with_memory_context(state))}
 
     async def _fallback_node(self, state: AgentState) -> AgentState:
-        return {
-            "answer": (
-                "这个请求触发了兜底分支。后续会在这里加入更完整的安全边界、错误恢复和人工提示。"
-            )
-        }
+        return {"answer": fallback_answer(state["route"])}
 
 
 def _with_memory_context(state: AgentState) -> str:

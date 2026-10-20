@@ -1,4 +1,5 @@
 import re
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -43,15 +44,16 @@ class SQLiteSessionStore:
             await db.commit()
             return SessionRecord(session_id=new_session_id, user_id=user_id)
 
-    async def append(self, session_id: str, role: str, content: str) -> None:
+    async def append(self, session_id: str, role: str, content: str,
+                     evidence: dict | None = None) -> None:
         await self._ensure_schema()
         async with aiosqlite.connect(self.database_path) as db:
             await db.execute(
                 """
-                INSERT INTO messages (session_id, role, content)
-                VALUES (?, ?, ?)
+                INSERT INTO messages (session_id, role, content, evidence_json)
+                VALUES (?, ?, ?, ?)
                 """,
-                (session_id, role, content),
+                (session_id, role, content, json.dumps(evidence or {}, ensure_ascii=False)),
             )
             if role == "user":
                 await db.execute(
@@ -156,7 +158,7 @@ class SQLiteSessionStore:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """
-                SELECT message_id, session_id, role, content, created_at
+                SELECT message_id, session_id, role, content, created_at, evidence_json
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY message_id ASC
@@ -171,6 +173,9 @@ class SQLiteSessionStore:
                     role=row["role"],
                     content=row["content"],
                     created_at=row["created_at"],
+                    sources=json.loads(row["evidence_json"] or "{}").get("sources", []),
+                    citation_warnings=json.loads(row["evidence_json"] or "{}").get(
+                        "citation_warnings", []),
                 )
                 for row in rows
             ]
@@ -255,6 +260,11 @@ class SQLiteSessionStore:
                 ON messages (session_id, message_id)
                 """
             )
+            cursor = await db.execute("PRAGMA table_info(messages)")
+            if "evidence_json" not in {row[1] for row in await cursor.fetchall()}:
+                await db.execute(
+                    "ALTER TABLE messages ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'"
+                )
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_sessions_user_updated

@@ -26,6 +26,15 @@ class ToolRegistry:
     def list_tools(self) -> list[ToolDefinition]:
         return [tool.definition() for tool in self._tools.values()]
 
+    def validate_arguments(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Validate a proposed call without executing it; registry is the allowlist."""
+        tool = self._tools.get(name)
+        if tool is None:
+            raise ValueError("Unknown tool")
+        if set(arguments) - set(tool.input_model.model_fields):
+            raise ValueError("Unknown tool argument")
+        return tool.input_model.model_validate(arguments, strict=True).model_dump()
+
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolCallResult:
         tool = self._tools.get(name)
         if tool is None:

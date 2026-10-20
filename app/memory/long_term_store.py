@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -31,7 +32,8 @@ class SQLiteLongTermMemoryStore:
         await self._ensure_schema()
         normalized_content = " ".join(content.strip().split())[: get_settings().memory_item_chars]
         slot = _preference_slot(memory_type, normalized_content)
-        embedding_json = _embedding_to_json(self.embedding_model.embed(normalized_content))
+        embedding_json = _embedding_to_json(
+            await asyncio.to_thread(self.embedding_model.embed, normalized_content))
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("BEGIN IMMEDIATE")
@@ -95,7 +97,7 @@ class SQLiteLongTermMemoryStore:
     async def search(self, user_id: str, query: str, limit: int = 5) -> list[MemoryItem]:
         await self._ensure_schema()
         query_terms = tokenize(query)
-        query_embedding = self.embedding_model.embed(query)
+        query_embedding = await asyncio.to_thread(self.embedding_model.embed, query)
 
         async with aiosqlite.connect(self.database_path) as db:
             db.row_factory = aiosqlite.Row
@@ -130,7 +132,7 @@ class SQLiteLongTermMemoryStore:
                 continue
             memory_embedding = _embedding_from_row(row)
             if memory_embedding is None:
-                memory_embedding = self.embedding_model.embed(memory.content)
+                memory_embedding = await asyncio.to_thread(self.embedding_model.embed, memory.content)
                 await self._backfill_embedding(memory.memory_id, memory_embedding)
 
             memory_terms = tokenize(memory.content)

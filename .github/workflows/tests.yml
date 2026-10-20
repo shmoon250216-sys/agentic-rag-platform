@@ -16,6 +16,14 @@ jobs:
       - name: Real database lifecycle tests
         env: {MILVUS_TEST_URI: 'http://127.0.0.1:19530'}
         run: pytest -q tests/test_milvus_integration.py --junitxml=milvus-results.xml
+      - name: Retrieval evaluator real-database contract (not semantic model benchmark)
+        env:
+          RAG_BACKEND: milvus
+          EMBEDDING_PROVIDER: hash
+          EMBEDDING_DIMENSIONS: '32'
+          RAG_VECTOR_DIMENSIONS: '32'
+          RERANK_PROVIDER: none
+        run: python scripts/evaluate_live_retrieval.py --allow-hash --max-cases 4 --output retrieval-contract-results.json
       - name: Database restart persistence
         run: |
           python scripts/check_milvus_restart.py write
@@ -36,3 +44,4 @@ jobs:
             milvus-service.log
             milvus-restart-result.json
             milvus-api-result.json
+            retrieval-contract-results.json

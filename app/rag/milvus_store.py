@@ -1,7 +1,8 @@
 """Milvus Standalone backend: native BM25 + HNSW/COSINE, application-side RRF.
 
 The blocking SDK and embedding adapter run in worker threads. A client lock
-serializes initialization and writes; it is not a distributed transaction lock.
+serializes SDK access only; embeddings are prepared outside that lock. This is
+not a distributed transaction lock.
 """
 import asyncio
 import hashlib
@@ -14,13 +15,14 @@ from uuid import UUID, uuid4
 
 from app.core.errors import AppError
 from app.rag.embedding import EmbeddingModel
+from app.rag.evidence import fragment_source
 from app.rag.ranking import RankedItem, normalize_scores, reciprocal_rank_fusion
 from app.rag.text_splitter import split_text
 from app.schemas.chat import SourceChunk
 from app.schemas.document import DocumentSummary
 
 logger = logging.getLogger(__name__)
-OUTPUT_FIELDS = ["doc_id", "title", "content"]
+OUTPUT_FIELDS = ["doc_id", "title", "content", "chunk_index"]
 
 
 class MilvusConfigurationError(AppError):
@@ -73,8 +75,11 @@ class MilvusKnowledgeBase:
                            "dimensions": self.vector_dimensions}, sort_keys=True)
 
     async def _run(self, function, *args):
+        return await self._offload(self._locked, function, *args)
+
+    async def _offload(self, function, *args):
         try:
-            return await asyncio.to_thread(self._locked, function, *args)
+            return await asyncio.to_thread(function, *args)
         except (AppError, ValueError):
             raise
         except Exception as exc:
@@ -165,9 +170,12 @@ class MilvusKnowledgeBase:
         return vector
 
     async def add_document(self, title: str, content: str) -> DocumentSummary:
-        return await self._run(self._add_document, title, content)
+        # Validate backend before paid embedding work. No SDK access in preparation.
+        await self._run(lambda: None)
+        document, rows = await self._offload(self._prepare_document, title, content)
+        return await self._run(self._insert_document, document, rows)
 
-    def _add_document(self, title: str, content: str) -> DocumentSummary:
+    def _prepare_document(self, title: str, content: str):
         pieces = split_text(content)
         if not pieces or not content.strip():
             raise ValueError("Document must contain text")
@@ -180,6 +188,11 @@ class MilvusKnowledgeBase:
                  "chunk_count": len(pieces), "content_length": len(content),
                  "dense": self._embedding(f"{title}\n{chunk}")}
                 for i, chunk in enumerate(pieces)]
+        return DocumentSummary(doc_id=doc_id, title=title, chunk_count=len(rows),
+                               content_length=len(content)), rows
+
+    def _insert_document(self, document: DocumentSummary, rows: list[dict]) -> DocumentSummary:
+        doc_id = document.doc_id
         try:
             result = self._client.insert(collection_name=self.collection_name, data=rows,
                                          timeout=self.timeout)
@@ -193,8 +206,7 @@ class MilvusKnowledgeBase:
             except Exception:
                 logger.warning("Milvus failed-upload cleanup unsuccessful for %s", doc_id)
             raise
-        return DocumentSummary(doc_id=doc_id, title=title, chunk_count=len(rows),
-                               content_length=len(content))
+        return document
 
     async def list_documents(self) -> list[DocumentSummary]:
         return await self._run(self._list_documents)
@@ -233,15 +245,26 @@ class MilvusKnowledgeBase:
     async def search(self, query: str, top_k: int = 3) -> list[SourceChunk]:
         if not query.strip() or top_k <= 0:
             return []
-        return await self._run(self._search, query, top_k)
+        return (await self.search_strategies(query, top_k))["rrf"]
 
-    def _search(self, query: str, top_k: int) -> list[SourceChunk]:
+    async def search_strategies(self, query: str, top_k: int = 3):
+        """Evaluation and production share candidate generation and RRF code.
+
+        One embedding request per question; no local Hash substitute.
+        """
+        if not query.strip() or top_k <= 0:
+            return {"bm25": [], "vector": [], "rrf": []}
+        await self._run(lambda: None)
+        vector = await self._offload(self._embedding, query)
+        return await self._run(self._search_strategies, query, top_k, vector)
+
+    def _search_strategies(self, query: str, top_k: int, vector: list[float]):
         limit = min(top_k * self.candidate_multiplier, 1000)
         shared = dict(collection_name=self.collection_name, limit=limit,
                       output_fields=OUTPUT_FIELDS, consistency_level="Strong", timeout=self.timeout)
         bm25 = self._client.search(data=[query], anns_field="sparse",
                                    search_params={"metric_type": "BM25", "params": {}}, **shared)[0]
-        dense = self._client.search(data=[self._embedding(query)], anns_field="dense",
+        dense = self._client.search(data=[vector], anns_field="dense",
                                     search_params={"metric_type": "COSINE",
                                                    "params": {"ef": max(64, limit)}}, **shared)[0]
         rankings, entities = [], {}
@@ -259,9 +282,37 @@ class MilvusKnowledgeBase:
             rankings.append(ranking)
         fused = normalize_scores(reciprocal_rank_fusion(
             rankings, rrf_k=self.rrf_k, weights=self.weights))
-        return [SourceChunk(doc_id=entities[r.item]["doc_id"], title=entities[r.item]["title"],
-                            snippet=entities[r.item]["content"][:2000], score=r.score)
-                for r in fused[:top_k]]
+        def sources(ranking):
+            return [fragment_source(
+                doc_id=entities[r.item]["doc_id"], title=entities[r.item]["title"],
+                chunk_id=r.item, chunk_index=entities[r.item].get("chunk_index"),
+                content=entities[r.item]["content"], score=r.score, resolvable=True,
+            ) for r in ranking[:top_k]]
+        return {"bm25": sources(rankings[0]), "vector": sources(rankings[1]),
+                "rrf": sources(fused)}
+
+    async def get_evidence(self, doc_id: str, chunk_id: str) -> SourceChunk:
+        """Resolve against live storage, never against an old cached answer."""
+        try:
+            doc_id = str(UUID(doc_id))
+        except ValueError:
+            raise AppError("EVIDENCE_NOT_FOUND", "证据不存在或已删除", 404) from None
+        if not re.fullmatch(re.escape(doc_id) + r":\d+", chunk_id):
+            raise AppError("EVIDENCE_NOT_FOUND", "证据不存在或已删除", 404)
+        return await self._run(self._get_evidence, doc_id, chunk_id)
+
+    def _get_evidence(self, doc_id, chunk_id):
+        rows = self._client.query(
+            collection_name=self.collection_name,
+            filter=f'chunk_id == "{chunk_id}" and doc_id == "{doc_id}"',
+            output_fields=["chunk_id", *OUTPUT_FIELDS], limit=1,
+            consistency_level="Strong", timeout=self.timeout)
+        if not rows:
+            raise AppError("EVIDENCE_NOT_FOUND", "证据不存在或已删除", 404)
+        row = rows[0]
+        return fragment_source(doc_id=row["doc_id"], title=row["title"],
+                               chunk_id=row["chunk_id"], chunk_index=row["chunk_index"],
+                               content=row["content"], score=0, resolvable=True)
 
     async def close(self) -> None:
         def shutdown():

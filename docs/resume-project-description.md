@@ -1,13 +1,21 @@
-# 项目描述与证据口径
+# Agentic RAG：简历项目描述与证据
 
-Agentic RAG｜企业制度与办事智能助手
+Python｜FastAPI｜LangGraph｜Milvus｜BM25 / RRF｜AsyncIO｜SQLite
 
-Python｜FastAPI｜LangGraph｜Milvus｜BM25｜RRF / Reranker｜SQLite
+- **文档与检索：**面向企业制度与报销规则查询，构建 PDF/DOCX 上传去重、原件归档及 Milvus 持久化链路；使用 Qwen Embedding、BM25 与 HNSW/COSINE 双路召回，通过加权 RRF 融合结果。
+- **语义路由：**以结构化模型输出替代关键词分流，结合 Pydantic、工具白名单与 LangGraph 条件边，支持缺信息澄清、超时兜底；在同一组 25 条合成边界用例中，路由命中率由规则基线 40% 提升至 96%。
+- **证据引用：**为片段附加文档 ID、chunk ID 与 SHA-256，回答以 [S编号] 关联来源；支持在线核验原文、检测引用失效与缺失，并持久化引用快照，便于追溯回答依据。
+- **上下文与并发：**用 SQLite 管理近期对话、有界摘录和长期偏好，支持追问补全、过期与容量清理；将记忆 Embedding 卸载至工作线程，移出 Milvus 持锁区，通过真实数据库测试验证上传等待向量化时仍可检索。
+- **检索评测：**构建 56 题合成集，52 道可回答题按原文证据判分；相同候选配置下，BM25 到 RRF 的 Recall@3 从 94.23% 提升至 96.15%（+1.92 个百分点）。157 项回归通过、1 项跳过，覆盖引用、路由与并发。
 
-- 将制度问答、结构化工具、办事计划组织为 LangGraph 五分支工作流，支持 PDF/DOCX 入库和来源引用。
-- 接入 Milvus Standalone 保存文档分片与向量，配置 Jieba/BM25 稀疏倒排及 HNSW/COSINE 索引，以加权 RRF 融合双路召回，提供可选 HTTP Reranker 和故障回退。
-- 补齐文档列表/整份删除、Schema 与模型版本校验、缓存失效、依赖就绪检查、SDK 线程卸载及容器卷部署；真实数据库生命周期、服务重启及 HTTP 上传/问答引用/删除已通过 [CI](https://github.com/shmoon250216-sys/agentic-rag-platform/actions/runs/36874042116)。
-- 以 SQLite 管理最近消息、有界历史摘录与长期偏好，支持更新、过期、容量限制和会话归属检查。
-- 现有 8 个标注问题用于检索策略对比；历史离线数字不能代表 Milvus 或真实语义模型表现。本地回归 107 通过、2 个真实数据库测试因环境跳过。
+## 指标口径与边界
 
-AI 协作实现的本地项目，不宣称真实企业接入、生产级多租户鉴权或线上收益。Hash Embedding 为测试向量，实际语义效果、Reranker 模型效果和负载指标待后续独立评测。原始 PDF 没有归档，内存/Redis 数据不自动迁移。
+- 路由：同一25题，旧规则基线路由10/25，新语义路由24/25；仅衡量route命中率。严格检查状态及适用工具参数时，旧策略9/25，新策略24/25。题目是针对边界情况编写的合成集，不是线上流量或独立盲测。真实模型结果保留首轮，不重跑挑优。见 [逐题配对报告](routing-comparison-results.json)，运行 `python scripts/compare_routing.py` 可重算。
+- 检索：8份合成文档、16个证据单元、56题，52道可回答题参与Recall；4道无答案题单列。BM25与RRF在同次真实Milvus/Qwen运行、每路候选20条下对照。变化为1.92个百分点，不是线上答案准确率提升。
+- 纯向量检索在该小集Recall@3为100%，优于RRF；保留这一结果，不能声称融合最优。线上默认每路候选12条，与该专项实验不同，不能直接把成绩当作线上验收。
+- 未启用真实Reranker，未评测生成答案正确率；引用校验确认来源与内容，不等同于语义蕴含检查。
+- 并发结果来自可控慢Embedding和真实Milvus测试，没有测出吞吐/延迟提升百分比；157项为本地全量pytest结果，1项Redis集成因未配置跳过。
+- 普通接口使用LangGraph条件边；SSE仍手动分发并复用决策与工具校验。SQLite最终快照不代表跨进程中间节点恢复。
+- AI协作实现的个人项目，没有真实企业接入、生产多租户鉴权或线上业务收益主张。
+
+详细来源：[检索原始报告](live-retrieval-results.json)、[路由原始报告](routing-evaluation-results.json)、[并发验收说明](embedding-concurrency.md)。

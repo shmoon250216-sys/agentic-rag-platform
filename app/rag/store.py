@@ -10,6 +10,7 @@ from app.rag.embedding import (
 )
 from app.rag.ranking import BM25Ranker, RankedItem, normalize_scores, reciprocal_rank_fusion
 from app.rag.text_splitter import split_text
+from app.rag.evidence import fragment_source
 from app.schemas.chat import SourceChunk
 from app.schemas.document import DocumentSummary
 
@@ -121,10 +122,12 @@ class InMemoryKnowledgeBase:
         )
         chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
         return [
-            SourceChunk(
+            fragment_source(
                 doc_id=chunks_by_id[result.item].doc_id,
                 title=chunks_by_id[result.item].title,
-                snippet=chunks_by_id[result.item].content[:2000],
+                chunk_id=result.item,
+                chunk_index=int(result.item.rsplit(":", 1)[1]),
+                content=chunks_by_id[result.item].content,
                 score=round(result.score, 4),
             )
             for result in fused[:top_k]

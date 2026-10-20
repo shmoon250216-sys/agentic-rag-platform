@@ -12,6 +12,12 @@ GitHub：<https://github.com/shmoon250216-sys/agentic-rag-platform>
 - **外部依赖影响本地开发**：默认使用确定性的本地模型和 Hash Embedding，LLM、Embedding 与检索后端均通过适配层切换。全栈部署默认使用 Milvus 持久化，离线开发显式使用内存。
 - **修改容易破坏链路**：固定评测覆盖 RAG、工具、规划、聊天和安全兜底，并以自动化测试验证文档、缓存、记忆和接口行为。
 
+## 真实检索评测与证据核验
+
+新增 [完整流程与学习说明](docs/retrieval-evidence-upgrade.md)、[56 题合成评测集](examples/retrieval_benchmark_v1.json) 和 [实际运行报告](docs/live-retrieval-results.json)。评测使用真实 Milvus 与配置的 Qwen Embedding，共享线上检索实现，分别比较 BM25、向量与 RRF；不是 Hash 模拟的语义成绩。
+
+回答以 `[S1]` 标注片段，返回文档 ID、片段 ID 和内容 SHA256；Milvus 后端支持点击核验当前片段，内容变化返回 409、删除返回 404。会话历史保留引用快照。该校验确认来源存在和内容一致，不证明答案被证据支持，也不提供未经解析的 PDF 页码。
+
 ## 核心流程
 
 ```mermaid
@@ -78,20 +84,34 @@ curl -X POST "http://127.0.0.1:8010/api/v1/chat" `
 
 ## 真实文档验证
 
-`examples/documents/` 提供一份 8 页的企业差旅与费用报销制度测试 PDF；`examples/evaluation_questions.json` 给出预期查询方向。该文档用于验证上传、解析、切分、召回和引用链路，不含真实企业或个人数据。
+`examples/evaluation_questions.json` 保留早期 PDF 上传练习的查询方向。旧专项脚本依赖早期 PDF；本地缺少文件时需补齐输入。新评测直接使用 `examples/retrieval_benchmark_v1.json` 中的 8 份合成制度，不依赖该 PDF；不含真实企业或个人数据。
 
 ```powershell
 python scripts/run_evaluation.py
 pytest -q
 ```
 
-Milvus 更新后的本地回归为 107 项通过、2 项真实数据库集成按环境跳过（Redis、Milvus）。[真实 Milvus CI](https://github.com/shmoon250216-sys/agentic-rag-platform/actions/runs/36874042116) 已通过 Standalone 入库/混合检索/删除、数据库服务重启保留以及 HTTP PDF 上传/问答引用验收；见 [Milvus 说明](docs/milvus.md)。评测数据与结果见 `app/evaluation/`、`docs/evaluation-results.json` 和 `docs/retrieval-evaluation-results.json`。
+当前本地全量回归 **157 项通过、1 项跳过**（Redis 集成未配置）；包含真实 Milvus 生命周期与上传期间检索的并发验证。CI 在干净环境中另行执行，不将本地结果冒充远端 CI 成绩。
 
-检索专项评测使用仓库内 8 页、5764 字的合成制度文档和 8 个标注问题。当前离线 Hash Embedding 不具备真实语义能力，因此默认将 BM25/RRF 权重设为 `1.0/0.1`；专项结果中 BM25 的 Recall@3 为 100%，RRF 的 Recall@3 为 87.5%。该结果用于暴露本地向量模型的限制，不包装为线上效果。切换真实 Embedding 后应重新标定权重。
+### 同条件对照与结果边界
+
+| 对照 | 基线 | 改进方案 | 范围 |
+| --- | ---: | ---: | --- |
+| 路由命中率 | 旧规则 40%（10/25） | 语义路由 96%（24/25） | 同一25条合成边界用例，保留首轮真实模型结果 |
+| Recall@3 | BM25 94.23% | RRF 96.15% | 同次Qwen/Milvus检索实验、每路20候选、52道可回答题 |
+
+路由提升56个百分点，检索提升1.92个百分点；都不是线上业务收益。路由严格计入状态/适用工具参数时为36%→96%，不要与单独route命中率混淆。纯向量检索在同一小集Recall@3为100%，优于RRF；4道无答案题仍召回候选。线上默认每路12候选，与专项实验不同，尚不能直接等同于线上效果。详细口径见 [项目描述与证据](docs/resume-project-description.md)。
 
 ```powershell
-python scripts/evaluate_retrieval.py
+# 使用已保存的首轮模型结果，重算规则/模型配对对照，不调用API
+python scripts/compare_routing.py
+# 单独重跑真实分类器（产生API用量，不执行工具）
+python scripts/evaluate_routing.py
+# 真实Embedding与Milvus检索评测（独立集合，产生Embedding用量）
+python scripts/evaluate_live_retrieval.py
 ```
+
+并发修复见 [Embedding与锁范围说明](docs/embedding-concurrency.md)。历史8题Hash实验仅供回归参考，旧指标名Recall实际为来源Hit，详见 [评测说明](docs/evaluation.md)，不能与新成绩直接计算提升。
 
 ## 检索与精排配置
 
@@ -121,10 +141,10 @@ RERANK_FAIL_OPEN=true
 ## 配置与边界
 
 - 默认 `FakeLLMClient` 用于离线、确定性开发；配置 OpenAI-compatible Provider 后才会生成模型回答。
-- 默认 Hash Embedding 侧重可复现与零外部依赖，专项评测已显示它会给 RRF 引入噪声；真实语义检索效果需要配置外部 Embedding 模型后重建索引并重新评测。
-- Supervisor 与工具选择当前采用规则决策；`plan` 分支输出结构化计划，不执行自主多步工具循环。
+- 默认 Hash Embedding 侧重可复现与零外部依赖，专项评测已显示它会给 RRF 引入噪声；真实语义评测已使用独立 Milvus Collection 和 Qwen Embedding 完成，见上述报告；成绩仅适用于该合成集。
+- Supervisor 在真实模型配置下使用结构化语义路由，校验分支、工具白名单和参数；含糊请求先澄清，超时/非法输出进入兜底。离线 fake 模式仍用明确标识的规则路由。`plan` 分支生成方案，不执行自主多步工具循环。详见 [语义路由设计](docs/semantic-routing.md)。
 - SQLite 保存有界会话历史、用户摘录摘要、长期记忆和最终快照；进程内 LangGraph 检查点在每次图运行结束后释放，不支持跨进程从中间节点续跑。上下文采用字符预算，摘要为原文摘录，非 LLM 语义压缩；不使用 Mem0/Memobase。
-- 本机尚无 Docker/WSL，未声称已在 Windows 启动 Milvus；CI 真实服务测试与本地运行须区分。内存及 Redis 文档不会自动迁移，需重新上传源文件。
+- 本机已通过 Docker 启动 Milvus 并完成真实语义评测；CI 使用 Hash Embedding 做真实数据库协议回归，不能当语义效果成绩。内存及 Redis 文档不会自动迁移，需重新上传源文件。
 - HTTP Reranker 的请求、排序和故障回退由自动化测试覆盖，但仓库不附带第三方模型密钥，也不宣称完成真实模型效果评测。
 - 开发 Token 与客户端传入的 `user_id` 适合本地验证，不等同于企业多租户鉴权。
 

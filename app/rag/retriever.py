@@ -5,6 +5,7 @@ import httpx
 from app.core.cache import TTLCache, make_cache_key
 from app.core.config import get_settings
 from app.rag.factory import get_knowledge_base
+from app.rag.evidence import label_sources
 from app.rag.reranker import NoopReranker, Reranker, get_reranker
 from app.schemas.chat import SourceChunk
 
@@ -54,7 +55,8 @@ class KnowledgeBaseRetriever:
                 raise
             result = list(result[:top_k])
 
-        result = [source.model_copy(update={"snippet": source.snippet[:220]}) for source in result]
+        # Label after reranking so IDs match the order actually seen by the model.
+        result = label_sources(result)
 
         if get_settings().cache_enabled:
             retrieval_cache.set(cache_key, result)

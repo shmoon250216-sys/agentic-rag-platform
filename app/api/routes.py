@@ -2,7 +2,9 @@ import inspect
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import Response
+from urllib.parse import quote
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import verify_token
@@ -12,17 +14,17 @@ from app.evaluation.quality_gate import QualityGateReport, evaluate_quality_gate
 from app.evaluation.runner import EvaluationRunner
 from app.llm.client import llm_response_cache
 from app.rag.factory import get_knowledge_base
-from app.rag.document_parser import DocumentParseError, parse_uploaded_document
 from app.rag.redis_store import RedisKnowledgeBase
 from app.rag.milvus_store import MilvusKnowledgeBase
 from app.rag.retriever import retrieval_cache
 from app.schemas.checkpoint import GraphCheckpointDetailResponse, GraphCheckpointListResponse
-from app.schemas.chat import ChatRequest, ChatResponse
+from app.schemas.chat import ChatRequest, ChatResponse, SourceChunk
 from app.schemas.document import DocumentCreate, DocumentCreateResponse, DocumentListResponse
 from app.schemas.memory import MemoryCreate, MemoryCreateResponse, MemoryListResponse
 from app.schemas.session import MessageListResponse, SessionListResponse
 from app.schemas.tool import ToolCallResult, ToolInvokeRequest, ToolListResponse
 from app.services.chat_service import ChatService
+from app.services.document_uploads import DocumentUploads
 from app.tools.registry import ToolRegistry
 
 router = APIRouter()
@@ -210,7 +212,7 @@ async def invoke_tool(tool_name: str, request: ToolInvokeRequest) -> ToolCallRes
 async def list_documents() -> DocumentListResponse:
     documents = await _maybe_await(get_knowledge_base().list_documents())
     return DocumentListResponse(
-        documents=documents,
+        documents=DocumentUploads(get_settings()).with_originals(documents),
         total_chunks=sum(document.chunk_count for document in documents),
     )
 
@@ -251,28 +253,38 @@ async def upload_document(
             status_code=413,
         )
 
-    try:
-        parsed = parse_uploaded_document(
-            filename,
-            data,
-            max_characters=settings.document_extract_max_chars,
-            max_pdf_pages=settings.document_pdf_max_pages,
-            max_docx_uncompressed_bytes=settings.document_docx_max_uncompressed_bytes,
-        )
-    except DocumentParseError as exc:
-        raise AppError(code=exc.code, message=exc.message, status_code=400) from exc
+    result = await DocumentUploads(settings).upload(get_knowledge_base(), filename, data, title)
+    if not result.reused:
+        _clear_document_caches()
+    return result
 
-    document_title = title.strip() if title and title.strip() else parsed.title
-    document = await _maybe_await(
-        get_knowledge_base().add_document(document_title, parsed.content)
-    )
-    _clear_document_caches()
-    return DocumentCreateResponse(document=document)
+
+@router.get("/api/v1/documents/{doc_id}/original", dependencies=[Depends(verify_token)])
+async def download_original(doc_id: str) -> Response:
+    filename, data, extension = await DocumentUploads(get_settings()).original(
+        get_knowledge_base(), doc_id)
+    media_type = ("application/pdf" if extension == ".pdf" else
+                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    return Response(data, media_type=media_type,
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename)})
+
+
+@router.get("/api/v1/documents/{doc_id}/evidence/{chunk_id}",
+            response_model=SourceChunk, dependencies=[Depends(verify_token)])
+async def get_evidence(doc_id: str, chunk_id: str,
+                       sha256: str | None = Query(default=None, pattern=r"^[a-f0-9]{64}$")):
+    store = get_knowledge_base()
+    if not isinstance(store, MilvusKnowledgeBase):
+        raise AppError("EVIDENCE_BACKEND_UNSUPPORTED", "在线证据核验需使用 Milvus 后端", 409)
+    evidence = await store.get_evidence(doc_id, chunk_id)
+    if sha256 and evidence.content_sha256 != sha256:
+        raise AppError("EVIDENCE_CHANGED", "证据内容已改变，请重新提问获取最新引用", 409)
+    return evidence
 
 
 @router.delete("/api/v1/documents/{doc_id}", dependencies=[Depends(verify_token)])
 async def delete_document(doc_id: str) -> dict[str, bool]:
-    deleted = await _maybe_await(get_knowledge_base().delete_document(doc_id))
+    deleted = await DocumentUploads(get_settings()).delete(get_knowledge_base(), doc_id)
     if deleted:
         _clear_document_caches()
     return {"deleted": deleted}

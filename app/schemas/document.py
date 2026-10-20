@@ -11,6 +11,7 @@ class DocumentSummary(BaseModel):
     title: str
     chunk_count: int
     content_length: int
+    original_filename: str | None = None
 
 
 class DocumentListResponse(BaseModel):
@@ -20,3 +21,4 @@ class DocumentListResponse(BaseModel):
 
 class DocumentCreateResponse(BaseModel):
     document: DocumentSummary
+    reused: bool = False

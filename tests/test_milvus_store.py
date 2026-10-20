@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import threading
+import re
 
 import pytest
 
@@ -60,6 +61,8 @@ class Client:
         return self.iterator
 
     def query(self, filter, **kwargs):
+        if match := re.search(r'chunk_id == "([^"]+)"', filter):
+            return [r for r in self.rows.values() if r["chunk_id"] == match[1]]
         return [r for r in self.rows.values() if r["doc_id"] in filter][:1]
 
     def delete(self, filter, **kwargs):

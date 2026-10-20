@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
     llm_timeout_seconds: float = 30
+    router_mode: str = "auto"
+    router_timeout_seconds: float = Field(default=8, gt=0, le=60)
     embedding_provider: str = "hash"
     embedding_api_key: str | None = None
     embedding_base_url: str = "https://api.openai.com/v1"
@@ -22,6 +24,7 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     cache_ttl_seconds: int = 300
     cache_max_entries: int = 256
+    document_storage_dir: str = "data/documents"
     document_upload_max_bytes: int = 10 * 1024 * 1024
     document_extract_max_chars: int = 200_000
     document_pdf_max_pages: int = 300

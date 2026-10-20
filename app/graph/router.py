@@ -44,41 +44,35 @@ class SupervisorRouter:
         if any(hint in normalized for hint in FALLBACK_HINTS):
             return RouteDecision(
                 route=RouteName.fallback,
-                confidence=0.92,
                 reason="请求命中了安全边界或兜底规则。",
             )
 
         if _looks_like_tool_action(normalized):
             return RouteDecision(
                 route=RouteName.tool,
-                confidence=0.82,
                 reason="请求包含明确工具动作，需要结构化工具处理。",
             )
 
         if _looks_like_complex_planning(normalized):
             return RouteDecision(
                 route=RouteName.plan,
-                confidence=0.74,
                 reason="请求需要拆解目标、组织步骤或综合多个能力后再回答。",
             )
 
         if any(hint in normalized for hint in RAG_HINTS):
             return RouteDecision(
                 route=RouteName.rag,
-                confidence=0.76,
                 reason="请求需要检索知识库后再回答。",
             )
 
         if any(hint in normalized for hint in TOOL_HINTS) or _looks_like_route_planning(normalized):
             return RouteDecision(
                 route=RouteName.tool,
-                confidence=0.78,
                 reason="请求需要结构化工具处理。",
             )
 
         return RouteDecision(
             route=RouteName.chat,
-            confidence=0.64,
             reason="请求可由普通对话分支处理。",
         )
 
